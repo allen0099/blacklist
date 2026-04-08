@@ -1,0 +1,19 @@
+# Binaries
+blacklist
+blacklist-*
+dist/
+
+# Go test artifacts
+*.test
+*.out
+coverage.out
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db

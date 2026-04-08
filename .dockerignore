@@ -1,0 +1,10 @@
+# Build artifacts
+blacklist
+blacklist-*
+dist/
+
+# Go workspace files
+vendor/
+
+# Coverage
+coverage.out

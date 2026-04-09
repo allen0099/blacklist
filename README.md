@@ -142,7 +142,7 @@ deploy:
 
 ### Prerequisites
 
-- Go 1.24 or later
+- Go 1.26 or later
 - `make` (GNU Make or compatible)
 
 ### Makefile targets

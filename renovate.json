@@ -16,7 +16,7 @@
       "groupName": "GitHub Actions",
       "automerge": true,
       "automergeType": "pr",
-      "matchUpdateTypes": ["minor", "patch", "digest"]
+      "matchUpdateTypes": ["minor", "patch"]
     },
     {
       "matchManagers": ["dockerfile"],

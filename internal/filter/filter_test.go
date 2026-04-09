@@ -3,6 +3,7 @@ package filter_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/allen0099/blacklist/internal/filter"
@@ -407,6 +408,9 @@ func TestRun_MultipleProtectFiles(t *testing.T) {
 }
 
 func TestRun_CopyOutput_UnreadableSource(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod permission semantics are not enforced on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("running as root; file permission tests are not meaningful")
 	}
@@ -430,6 +434,9 @@ func TestRun_CopyOutput_UnreadableSource(t *testing.T) {
 }
 
 func TestRun_CopyOutput_UnwritableDestination(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod permission semantics are not enforced on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("running as root; file permission tests are not meaningful")
 	}
@@ -452,6 +459,9 @@ func TestRun_CopyOutput_UnwritableDestination(t *testing.T) {
 }
 
 func TestRun_WalkError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod permission semantics are not enforced on Windows")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("running as root; permission tests are not meaningful")
 	}

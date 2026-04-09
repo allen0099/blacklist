@@ -3,6 +3,7 @@ package logger
 import (
 	"log/slog"
 	"os"
+	"sync/atomic"
 )
 
 // Level represents the logging verbosity level.
@@ -14,7 +15,7 @@ const (
 	LevelVerbose              // debug + info + errors
 )
 
-var current *slog.Logger
+var current atomic.Pointer[slog.Logger]
 
 // Init initialises the global logger at the requested verbosity level.
 func Init(level Level) {
@@ -29,21 +30,23 @@ func Init(level Level) {
 	}
 
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slogLevel})
-	current = slog.New(handler)
-	slog.SetDefault(current)
+	l := slog.New(handler)
+	current.Store(l)
+	slog.SetDefault(l)
 }
 
 // Reset sets the global logger to nil, forcing the next call to Get() to
 // re-initialise it.  Intended for use in tests only.
 func Reset() {
-	current = nil
+	current.Store(nil)
 }
 
 // Get returns the global logger instance, initialising it at normal level if it
 // has not already been initialised.
 func Get() *slog.Logger {
-	if current == nil {
-		Init(LevelNormal)
+	if l := current.Load(); l != nil {
+		return l
 	}
-	return current
+	Init(LevelNormal)
+	return current.Load()
 }

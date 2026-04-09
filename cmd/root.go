@@ -69,7 +69,7 @@ would copy without making any changes.`,
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false,
 		"enable verbose (debug) output (env: "+EnvVerbose+")")
 	c.Flags().BoolVarP(&quiet, "quiet", "q", false,
-		"suppress all output except errors (env: "+EnvQuiet+")")
+		"suppress non-error log output (env: "+EnvQuiet+")")
 	c.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print what would be done without making any changes")
 

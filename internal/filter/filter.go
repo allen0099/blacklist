@@ -182,19 +182,29 @@ func compilePatterns(files []string) (*ignore.GitIgnore, error) {
 	return ignore.CompileIgnoreLines(splitLines(lines)...), nil
 }
 
-// splitLines converts a slice of multi-line strings into individual lines.
+// splitLines converts a slice of multi-line strings into individual lines,
+// normalising CRLF to LF so that patterns are not broken on Windows or when
+// files were edited with CRLF line endings.
 func splitLines(blocks []string) []string {
 	var out []string
 	for _, block := range blocks {
 		start := 0
 		for i := 0; i < len(block); i++ {
 			if block[i] == '\n' {
-				out = append(out, block[start:i])
+				line := block[start:i]
+				if len(line) > 0 && line[len(line)-1] == '\r' {
+					line = line[:len(line)-1]
+				}
+				out = append(out, line)
 				start = i + 1
 			}
 		}
 		if start < len(block) {
-			out = append(out, block[start:])
+			line := block[start:]
+			if len(line) > 0 && line[len(line)-1] == '\r' {
+				line = line[:len(line)-1]
+			}
+			out = append(out, line)
 		}
 	}
 	return out
@@ -215,9 +225,15 @@ func copyResults(results []Result, srcRoot, dstRoot string, dryRun bool, log *sl
 
 		dst := filepath.Join(dstRoot, rel)
 
-		info, err := os.Stat(r.Path)
+		info, err := os.Lstat(r.Path)
 		if err != nil {
 			return fmt.Errorf("stat %q: %w", r.Path, err)
+		}
+
+		// Skip symlinks: following them could copy data from outside srcRoot.
+		if info.Mode()&os.ModeSymlink != 0 {
+			log.Debug("skipping symlink", "path", r.Path)
+			continue
 		}
 
 		if info.IsDir() {

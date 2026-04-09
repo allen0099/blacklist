@@ -8,11 +8,12 @@
 
 set -e
 
-# Collect staged .go files (added, copied, modified) safely.
-if ! git diff --cached --name-only -z --diff-filter=ACM -- '*.go' | grep -qz .; then
+# Exit early when there are no staged .go files (added, copied, modified).
+if [ -z "$(git diff --cached --name-only --diff-filter=ACM -- '*.go' | head -n 1)" ]; then
     exit 0
 fi
 
+# Use NUL-delimited paths so filenames with spaces are passed safely to xargs.
 UNFORMATTED=$(git diff --cached --name-only -z --diff-filter=ACM -- '*.go' | xargs -0 gofmt -l)
 
 if [ -n "$UNFORMATTED" ]; then

@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 go build \
         .
 
 # ── Final stage ────────────────────────────────────────────────────────────────
-FROM alpine:3.21
+FROM alpine:3.23
 
 # Install ca-certificates for HTTPS calls (future-proofing) and
 # add a non-root user so the image is safe to run in GitLab CI.

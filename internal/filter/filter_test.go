@@ -34,9 +34,14 @@ func writePatternFile(t *testing.T, lines ...string) string {
 	if err != nil {
 		t.Fatalf("writePatternFile: %v", err)
 	}
-	defer f.Close()
 	for _, l := range lines {
-		f.WriteString(l + "\n")
+		if _, err := f.WriteString(l + "\n"); err != nil {
+			_ = f.Close()
+			t.Fatalf("writePatternFile write: %v", err)
+		}
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("writePatternFile close: %v", err)
 	}
 	return f.Name()
 }

@@ -208,7 +208,7 @@ docker build -t blacklist .
 
 | Workflow | Trigger | Description |
 |---|---|---|
-| [CI](.github/workflows/ci.yml) | push / pull request | Format check, vet, test (multi-Go-version), vuln scan, build binaries |
+| [CI](.github/workflows/ci.yml) | push / pull request | Format check, vet, test, vuln scan, build binaries |
 | [Release](.github/workflows/release.yml) | `v*.*.*` tag | Build & publish binaries + Docker image |
 
 ## License

@@ -174,8 +174,8 @@ func compilePatterns(files []string) (*ignore.GitIgnore, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading pattern file %q: %w", f, err)
 		}
-		// Append a blank line between files to avoid accidentally joining the
-		// last line of one file with the first line of the next.
+		// Keep each file's contents as a separate block for splitLines.
+		// The trailing empty block is harmless and does not emit a blank line.
 		lines = append(lines, string(data), "")
 	}
 

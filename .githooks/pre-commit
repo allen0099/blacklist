@@ -8,14 +8,12 @@
 
 set -e
 
-# Collect staged .go files (added, copied, modified).
-STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
-
-if [ -z "$STAGED_GO" ]; then
+# Collect staged .go files (added, copied, modified) safely.
+if ! git diff --cached --name-only -z --diff-filter=ACM -- '*.go' | grep -qz .; then
     exit 0
 fi
 
-UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l)
+UNFORMATTED=$(git diff --cached --name-only -z --diff-filter=ACM -- '*.go' | xargs -0 gofmt -l)
 
 if [ -n "$UNFORMATTED" ]; then
     echo "❌  The following Go files are not formatted (run 'make fmt' or 'gofmt -w'):"

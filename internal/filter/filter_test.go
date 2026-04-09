@@ -105,7 +105,7 @@ func TestRun_ExcludePattern(t *testing.T) {
 
 func TestRun_ProtectOverridesExclude(t *testing.T) {
 	root := makeTree(t, []string{"keep.txt", "drop.txt"})
-	ef := writePatternFile(t, "*.txt")   // exclude all .txt files
+	ef := writePatternFile(t, "*.txt")    // exclude all .txt files
 	pf := writePatternFile(t, "keep.txt") // but protect keep.txt
 
 	results, err := filter.Run(filter.Options{
@@ -329,144 +329,144 @@ func TestResult_Included(t *testing.T) {
 }
 
 func TestRun_DryRunWithDirectory(t *testing.T) {
-root := makeTree(t, []string{"sub/file.go", "main.go"})
-outDir := t.TempDir()
+	root := makeTree(t, []string{"sub/file.go", "main.go"})
+	outDir := t.TempDir()
 
-_, err := filter.Run(filter.Options{
-Dir:       root,
-OutputDir: outDir,
-DryRun:    true,
-})
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
+	_, err := filter.Run(filter.Options{
+		Dir:       root,
+		OutputDir: outDir,
+		DryRun:    true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-// In dry-run mode, no files or directories should be created.
-entries, _ := os.ReadDir(outDir)
-if len(entries) != 0 {
-t.Errorf("dry-run: expected empty output dir, got %d entries", len(entries))
-}
+	// In dry-run mode, no files or directories should be created.
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 0 {
+		t.Errorf("dry-run: expected empty output dir, got %d entries", len(entries))
+	}
 }
 
 func TestRun_PatternFileNoTrailingNewline(t *testing.T) {
-root := makeTree(t, []string{"a.go", "b.log"})
+	root := makeTree(t, []string{"a.go", "b.log"})
 
-// Write a pattern file without a trailing newline.
-patFile := filepath.Join(t.TempDir(), "patterns.txt")
-if err := os.WriteFile(patFile, []byte("*.log"), 0o644); err != nil {
-t.Fatal(err)
-}
+	// Write a pattern file without a trailing newline.
+	patFile := filepath.Join(t.TempDir(), "patterns.txt")
+	if err := os.WriteFile(patFile, []byte("*.log"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
-results, err := filter.Run(filter.Options{
-Dir:          root,
-ExcludeFiles: []string{patFile},
-})
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
+	results, err := filter.Run(filter.Options{
+		Dir:          root,
+		ExcludeFiles: []string{patFile},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-m := resultMap(t, root, results)
-if !m["a.go"].Included() {
-t.Error("a.go should be included")
-}
-if m["b.log"].Included() {
-t.Error("b.log should be excluded by pattern without trailing newline")
-}
+	m := resultMap(t, root, results)
+	if !m["a.go"].Included() {
+		t.Error("a.go should be included")
+	}
+	if m["b.log"].Included() {
+		t.Error("b.log should be excluded by pattern without trailing newline")
+	}
 }
 
 func TestRun_MultipleProtectFiles(t *testing.T) {
-root := makeTree(t, []string{"keep1.txt", "keep2.txt", "drop.txt"})
-ef := writePatternFile(t, "*.txt")
-pf1 := writePatternFile(t, "keep1.txt")
-pf2 := writePatternFile(t, "keep2.txt")
+	root := makeTree(t, []string{"keep1.txt", "keep2.txt", "drop.txt"})
+	ef := writePatternFile(t, "*.txt")
+	pf1 := writePatternFile(t, "keep1.txt")
+	pf2 := writePatternFile(t, "keep2.txt")
 
-results, err := filter.Run(filter.Options{
-Dir:          root,
-ExcludeFiles: []string{ef},
-ProtectFiles: []string{pf1, pf2},
-})
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
+	results, err := filter.Run(filter.Options{
+		Dir:          root,
+		ExcludeFiles: []string{ef},
+		ProtectFiles: []string{pf1, pf2},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-m := resultMap(t, root, results)
-if !m["keep1.txt"].Included() {
-t.Error("keep1.txt should be included (protected by pf1)")
-}
-if !m["keep2.txt"].Included() {
-t.Error("keep2.txt should be included (protected by pf2)")
-}
-if m["drop.txt"].Included() {
-t.Error("drop.txt should be excluded")
-}
+	m := resultMap(t, root, results)
+	if !m["keep1.txt"].Included() {
+		t.Error("keep1.txt should be included (protected by pf1)")
+	}
+	if !m["keep2.txt"].Included() {
+		t.Error("keep2.txt should be included (protected by pf2)")
+	}
+	if m["drop.txt"].Included() {
+		t.Error("drop.txt should be excluded")
+	}
 }
 
 func TestRun_CopyOutput_UnreadableSource(t *testing.T) {
-if os.Getuid() == 0 {
-t.Skip("running as root; file permission tests are not meaningful")
-}
-root := makeTree(t, []string{"secret.go"})
-outDir := t.TempDir()
+	if os.Getuid() == 0 {
+		t.Skip("running as root; file permission tests are not meaningful")
+	}
+	root := makeTree(t, []string{"secret.go"})
+	outDir := t.TempDir()
 
-// Make the file unreadable.
-secretPath := filepath.Join(root, "secret.go")
-if err := os.Chmod(secretPath, 0o000); err != nil {
-t.Fatal(err)
-}
-t.Cleanup(func() { os.Chmod(secretPath, 0o644) }) //nolint:errcheck
+	// Make the file unreadable.
+	secretPath := filepath.Join(root, "secret.go")
+	if err := os.Chmod(secretPath, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(secretPath, 0o644) }) //nolint:errcheck
 
-_, err := filter.Run(filter.Options{
-Dir:       root,
-OutputDir: outDir,
-})
-if err == nil {
-t.Error("expected error when source file is unreadable")
-}
+	_, err := filter.Run(filter.Options{
+		Dir:       root,
+		OutputDir: outDir,
+	})
+	if err == nil {
+		t.Error("expected error when source file is unreadable")
+	}
 }
 
 func TestRun_CopyOutput_UnwritableDestination(t *testing.T) {
-if os.Getuid() == 0 {
-t.Skip("running as root; file permission tests are not meaningful")
-}
-root := makeTree(t, []string{"file.go"})
-outDir := t.TempDir()
+	if os.Getuid() == 0 {
+		t.Skip("running as root; file permission tests are not meaningful")
+	}
+	root := makeTree(t, []string{"file.go"})
+	outDir := t.TempDir()
 
-// Make the output directory read-only so we can't create files in it.
-if err := os.Chmod(outDir, 0o555); err != nil {
-t.Fatal(err)
-}
-t.Cleanup(func() { os.Chmod(outDir, 0o755) }) //nolint:errcheck
+	// Make the output directory read-only so we can't create files in it.
+	if err := os.Chmod(outDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(outDir, 0o755) }) //nolint:errcheck
 
-_, err := filter.Run(filter.Options{
-Dir:       root,
-OutputDir: outDir,
-})
-if err == nil {
-t.Error("expected error when output directory is not writable")
-}
+	_, err := filter.Run(filter.Options{
+		Dir:       root,
+		OutputDir: outDir,
+	})
+	if err == nil {
+		t.Error("expected error when output directory is not writable")
+	}
 }
 
 func TestRun_WalkError(t *testing.T) {
-if os.Getuid() == 0 {
-t.Skip("running as root; permission tests are not meaningful")
-}
-root := makeTree(t, []string{"sub/hidden.go", "main.go"})
-subDir := filepath.Join(root, "sub")
+	if os.Getuid() == 0 {
+		t.Skip("running as root; permission tests are not meaningful")
+	}
+	root := makeTree(t, []string{"sub/hidden.go", "main.go"})
+	subDir := filepath.Join(root, "sub")
 
-// Make the sub-directory inaccessible so WalkDir receives an error.
-if err := os.Chmod(subDir, 0o000); err != nil {
-t.Fatal(err)
-}
-t.Cleanup(func() { os.Chmod(subDir, 0o755) }) //nolint:errcheck
+	// Make the sub-directory inaccessible so WalkDir receives an error.
+	if err := os.Chmod(subDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(subDir, 0o755) }) //nolint:errcheck
 
-// The walker should continue past the error (it logs a warning).
-results, err := filter.Run(filter.Options{Dir: root})
-if err != nil {
-t.Fatalf("unexpected error: %v", err)
-}
-// At least main.go should still be present.
-m := resultMap(t, root, results)
-if _, ok := m["main.go"]; !ok {
-t.Error("main.go should still appear despite walk error in sub/")
-}
+	// The walker should continue past the error (it logs a warning).
+	results, err := filter.Run(filter.Options{Dir: root})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// At least main.go should still be present.
+	m := resultMap(t, root, results)
+	if _, ok := m["main.go"]; !ok {
+		t.Error("main.go should still appear despite walk error in sub/")
+	}
 }

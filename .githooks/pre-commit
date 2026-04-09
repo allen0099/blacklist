@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+# pre-commit hook: reject commits that contain unformatted Go source files.
+#
+# Install via:
+#   make install-hooks
+# or manually:
+#   git config core.hooksPath .githooks
+
+set -e
+
+# Collect staged .go files (added, copied, modified).
+STAGED_GO=$(git diff --cached --name-only --diff-filter=ACM | grep '\.go$' || true)
+
+if [ -z "$STAGED_GO" ]; then
+    exit 0
+fi
+
+UNFORMATTED=$(echo "$STAGED_GO" | xargs gofmt -l)
+
+if [ -n "$UNFORMATTED" ]; then
+    echo "❌  The following Go files are not formatted (run 'make fmt' or 'gofmt -w'):"
+    echo "$UNFORMATTED" | sed 's/^/   /'
+    exit 1
+fi
+
+exit 0

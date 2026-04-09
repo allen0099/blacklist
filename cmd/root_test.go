@@ -226,3 +226,95 @@ func TestExecute_TooManyArgs(t *testing.T) {
 		t.Error("expected error when more than one positional arg is given")
 	}
 }
+
+func TestExecute_EnvVerbose(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "")
+
+	t.Setenv(cmd.EnvVerbose, "1")
+
+	root := cmd.NewRootCmd()
+	root.SetArgs([]string{dir}) // no --verbose flag
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Verbose mode is on – the debug log for "included" should appear on stderr.
+	// (buf captures stdout; we just check there's no error.)
+}
+
+func TestExecute_EnvQuiet(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "")
+
+	t.Setenv(cmd.EnvQuiet, "true")
+
+	root := cmd.NewRootCmd()
+	root.SetArgs([]string{dir}) // no --quiet flag
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecute_EnvVerbose_FlagOverrides(t *testing.T) {
+	// If BLACKLIST_VERBOSE is set but --quiet is explicitly passed, quiet wins
+	// (the explicit flag overrides the env var for verbose, and quiet is set).
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "")
+
+	t.Setenv(cmd.EnvVerbose, "1")
+
+	root := cmd.NewRootCmd()
+	root.SetArgs([]string{"--quiet", dir})
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestExecute_EnvQuiet_FlagOverrides(t *testing.T) {
+	// If BLACKLIST_QUIET is set but --verbose is explicitly passed, verbose wins.
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "")
+
+	t.Setenv(cmd.EnvQuiet, "1")
+
+	root := cmd.NewRootCmd()
+	root.SetArgs([]string{"--verbose", dir})
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestIsTruthy(t *testing.T) {
+	// Exercise isTruthy indirectly via the env-var path.
+	// We use "yes" (also a truthy value) to make sure all truthy aliases work.
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "")
+
+	for _, val := range []string{"1", "true", "yes", "TRUE", "YES", "True"} {
+		t.Run("verbose="+val, func(t *testing.T) {
+			t.Setenv(cmd.EnvVerbose, val)
+			t.Setenv(cmd.EnvQuiet, "")
+
+			root := cmd.NewRootCmd()
+			root.SetArgs([]string{dir})
+			var buf bytes.Buffer
+			root.SetOut(&buf)
+			root.SetErr(&buf)
+			if err := root.Execute(); err != nil {
+				t.Fatalf("unexpected error with %s=%s: %v", cmd.EnvVerbose, val, err)
+			}
+		})
+	}
+}

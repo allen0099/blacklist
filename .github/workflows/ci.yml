@@ -36,8 +36,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Check formatting
+        run: make fmt-check
+
       - name: Vet
-        run: go vet ./...
+        run: make vet
 
       - name: Test with coverage
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic

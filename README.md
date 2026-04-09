@@ -55,11 +55,21 @@ If `directory` is omitted the current working directory is used.
 | `--protect <file>` | `-p` | Path to a gitignore-format file with protection patterns. Repeatable. |
 | `--output <dir>` | `-o` | Copy included files to this directory (preserving structure). |
 | `--dry-run` | | Show what would be done without writing any files. |
-| `--verbose` | `-v` | Enable debug output. |
-| `--quiet` | `-q` | Suppress all output except errors. |
+| `--verbose` | `-v` | Enable debug output (env: `BLACKLIST_VERBOSE`). |
+| `--quiet` | `-q` | Suppress all output except errors (env: `BLACKLIST_QUIET`). |
 | `--help` | `-h` | Show help. |
 
 `--verbose` and `--quiet` are mutually exclusive.
+
+### Environment variables
+
+Verbosity can be controlled without passing flags by setting environment
+variables.  An explicit flag always takes precedence over an environment variable.
+
+| Variable | Equivalent flag | Accepted values |
+|---|---|---|
+| `BLACKLIST_VERBOSE` | `--verbose` | `1`, `true`, `yes` (case-insensitive) |
+| `BLACKLIST_QUIET` | `--quiet` | `1`, `true`, `yes` (case-insensitive) |
 
 ### Priority
 
@@ -133,23 +143,58 @@ deploy:
 ### Prerequisites
 
 - Go 1.22 or later
+- `make` (GNU Make or compatible)
+
+### Makefile targets
+
+```
+make build          # compile the binary
+make test           # run tests with race detector
+make test-coverage  # run tests and print per-function coverage
+make fmt            # format all Go files in-place (gofmt)
+make fmt-check      # fail if any files are not formatted (used in CI)
+make vet            # run go vet
+make clean          # remove build artifacts
+make install-hooks  # configure git to use .githooks/pre-commit
+make help           # list all targets
+```
 
 ### Run tests
 
 ```bash
-go test ./... -race
+make test
 ```
 
 ### Check test coverage
 
 ```bash
-go test ./... -coverprofile=coverage.out && go tool cover -func=coverage.out
+make test-coverage
 ```
 
 ### Build
 
 ```bash
+make build
+# or:
 go build -o blacklist .
+```
+
+### Git commit hooks
+
+The repository ships a pre-commit hook (`.githooks/pre-commit`) that rejects
+commits containing unformatted Go source files.  Install it once with:
+
+```bash
+make install-hooks
+```
+
+From that point on, any commit that includes a `.go` file that is not
+`gofmt`-clean will be rejected.  Fix formatting and re-commit:
+
+```bash
+make fmt
+git add -u
+git commit ...
 ```
 
 ### Build Docker image

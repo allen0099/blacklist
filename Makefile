@@ -3,7 +3,7 @@ MODULE      := $(shell go list -m)
 GO          := go
 GOFILES     := $(shell find . -name '*.go' -not -path './vendor/*')
 
-.PHONY: all build test vet fmt fmt-check clean install-hooks help
+.PHONY: all build test vet fmt fmt-check vuln clean install-hooks help
 
 ## all: build the binary (default target)
 all: build
@@ -24,6 +24,10 @@ test-coverage:
 ## vet: run go vet
 vet:
 	$(GO) vet ./...
+
+## vuln: run govulncheck to scan for known vulnerabilities
+vuln:
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 ## fmt: format all Go source files in-place
 fmt:

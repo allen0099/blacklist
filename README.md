@@ -142,7 +142,7 @@ deploy:
 
 ### Prerequisites
 
-- Go 1.22 or later
+- Go 1.24 or later
 - `make` (GNU Make or compatible)
 
 ### Makefile targets
@@ -154,6 +154,7 @@ make test-coverage  # run tests and print per-function coverage
 make fmt            # format all Go files in-place (gofmt)
 make fmt-check      # fail if any files are not formatted (used in CI)
 make vet            # run go vet
+make vuln           # run govulncheck to scan for known vulnerabilities
 make clean          # remove build artifacts
 make install-hooks  # configure git to use .githooks/pre-commit
 make help           # list all targets
@@ -207,9 +208,9 @@ docker build -t blacklist .
 
 | Workflow | Trigger | Description |
 |---|---|---|
-| [CI](.github/workflows/ci.yml) | push / pull request | Vet, test (multi-Go-version), build binaries |
+| [CI](.github/workflows/ci.yml) | push / pull request | Format check, vet, test (multi-Go-version), vuln scan, build binaries |
 | [Release](.github/workflows/release.yml) | `v*.*.*` tag | Build & publish binaries + Docker image |
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE).

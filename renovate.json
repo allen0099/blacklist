@@ -7,25 +7,13 @@
   "labels": ["dependencies"],
   "packageRules": [
     {
-      "matchManagers": ["gomod"],
-      "groupName": "Go dependencies",
-      "automerge": false
-    },
-    {
       "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["digest"],
       "enabled": false
     },
     {
-      "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions",
-      "automerge": true,
-      "automergeType": "pr",
-      "matchUpdateTypes": ["minor", "patch"]
-    },
-    {
-      "matchManagers": ["dockerfile"],
-      "groupName": "Docker base images",
+      "matchManagers": ["gomod", "github-actions", "dockerfile"],
+      "groupName": "all dependencies",
       "automerge": false
     }
   ],

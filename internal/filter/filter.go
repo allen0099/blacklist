@@ -209,40 +209,13 @@ func compilePatterns(files []string) (*ignore.GitIgnore, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading pattern file %q: %w", f, err)
 		}
-		// Keep each file's contents as a separate block for splitLines.
-		// The trailing empty block is harmless and does not emit a blank line.
-		lines = append(lines, string(data), "")
-	}
-
-	return ignore.CompileIgnoreLines(splitLines(lines)...), nil
-}
-
-// splitLines converts a slice of multi-line strings into individual lines,
-// normalising CRLF to LF so that patterns are not broken on Windows or when
-// files were edited with CRLF line endings.
-func splitLines(blocks []string) []string {
-	var out []string
-	for _, block := range blocks {
-		start := 0
-		for i := 0; i < len(block); i++ {
-			if block[i] == '\n' {
-				line := block[start:i]
-				if len(line) > 0 && line[len(line)-1] == '\r' {
-					line = line[:len(line)-1]
-				}
-				out = append(out, line)
-				start = i + 1
-			}
-		}
-		if start < len(block) {
-			line := block[start:]
-			if len(line) > 0 && line[len(line)-1] == '\r' {
-				line = line[:len(line)-1]
-			}
-			out = append(out, line)
+		// Strip CR so CRLF-edited files match like LF ones.
+		for _, line := range strings.Split(string(data), "\n") {
+			lines = append(lines, strings.TrimSuffix(line, "\r"))
 		}
 	}
-	return out
+
+	return ignore.CompileIgnoreLines(lines...), nil
 }
 
 // copyResults copies each included file from srcRoot to dstRoot, preserving

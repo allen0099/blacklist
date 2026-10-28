@@ -105,10 +105,10 @@ func TestRun_Patterns(t *testing.T) {
 		},
 		{
 			name:    "protect inside excluded directory",
-			files:   []string{"vendor/keep.go", "vendor/sub/drop.go", "main.go"},
+			files:   []string{"vendor/keep.go", "vendor/sub/drop.go", "main.go", "zz.go"},
 			exclude: []string{"vendor/\n"},
 			protect: []string{"keep.go\n"},
-			want:    []string{"main.go", "vendor/keep.go"},
+			want:    []string{"main.go", "vendor/keep.go", "zz.go"},
 		},
 	}
 	for _, tc := range tests {
@@ -176,6 +176,20 @@ func TestRun_Copy(t *testing.T) {
 		}
 		if entries, _ := os.ReadDir(out); len(entries) != 0 {
 			t.Errorf("expected empty output dir, got %d entries", len(entries))
+		}
+	})
+
+	t.Run("symlinks are not followed", func(t *testing.T) {
+		src := makeTree(t, "a.go")
+		if err := os.Symlink(filepath.Join(root, "README.md"), filepath.Join(src, "link")); err != nil {
+			t.Skip("symlinks unsupported:", err)
+		}
+		out := t.TempDir()
+		if _, err := filter.Run(filter.Options{Dir: src, OutputDir: out}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(filepath.Join(out, "link")); !os.IsNotExist(err) {
+			t.Error("symlink should not be copied")
 		}
 	})
 

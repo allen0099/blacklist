@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 go build \
         .
 
 # ── Final stage ────────────────────────────────────────────────────────────────
-FROM alpine:3.23
+FROM alpine:3.24
 
 # Alpine (not scratch) keeps a shell for CI job images; run as non-root.
 RUN adduser -D -u 1000 blacklist

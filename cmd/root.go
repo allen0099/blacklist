@@ -37,6 +37,7 @@ func NewRootCmd(version string) *cobra.Command {
 		verbose      bool
 		quiet        bool
 		dryRun       bool
+		null         bool
 	)
 
 	c := &cobra.Command{
@@ -52,6 +53,9 @@ Protection rules (-p/--protect) follow the same format.  A file that matches a
 protect pattern is always included, even if it also matches an exclude pattern.
 
 Priority: protect > exclude.
+
+Included files (not directories) are printed to stdout relative to the
+directory, ready for tar -T, rsync --files-from or zip -@.
 
 When --output is given, included files are copied to that directory, preserving
 the relative path structure.  Combined with --dry-run, the tool prints what it
@@ -73,12 +77,14 @@ would copy without making any changes.`,
 		"suppress non-error log output (env: "+EnvQuiet+")")
 	c.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print what would be done without making any changes")
+	c.Flags().BoolVarP(&null, "null", "0", false,
+		"separate output paths with NUL instead of newline (for xargs -0, tar --null -T -)")
 
 	// verbose and quiet are mutually exclusive.
 	c.MarkFlagsMutuallyExclusive("verbose", "quiet")
 
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runCmd(cmd, args, excludeFiles, protectFiles, outputDir, verbose, quiet, dryRun)
+		return runCmd(cmd, args, excludeFiles, protectFiles, outputDir, verbose, quiet, dryRun, null)
 	}
 
 	return c
@@ -96,7 +102,7 @@ func runCmd(
 	args []string,
 	excludeFiles, protectFiles []string,
 	outputDir string,
-	verbose, quiet, dryRun bool,
+	verbose, quiet, dryRun, null bool,
 ) error {
 	// Apply environment-variable defaults when the flags were not explicitly
 	// set on the command line.  An explicit flag always wins.
@@ -138,10 +144,15 @@ func runCmd(
 		return err
 	}
 
-	// Print the list of included files to stdout (one per line).
+	// Print included files (not directories, so tar -T does not recurse into
+	// them) relative to dir.
+	sep := "\n"
+	if null {
+		sep = "\x00"
+	}
 	for _, r := range results {
-		if r.Included() {
-			fmt.Fprintln(cmd.OutOrStdout(), r.Path)
+		if r.Included() && !r.IsDir {
+			fmt.Fprint(cmd.OutOrStdout(), r.Rel+sep)
 		}
 	}
 

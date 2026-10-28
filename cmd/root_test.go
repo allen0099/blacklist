@@ -74,6 +74,23 @@ func TestFilterAndCopy(t *testing.T) {
 	}
 }
 
+func TestListing(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "b.go", "")
+	writeFile(t, dir, "sub/a.go", "")
+
+	out, _, err := run(t, "-q", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "b.go\nsub/a.go\n"; out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+	if out, _, _ = run(t, "-q", "-0", dir); out != "b.go\x00sub/a.go\x00" {
+		t.Errorf("-0: got %q", out)
+	}
+}
+
 func TestVerbosity(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", "")

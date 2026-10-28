@@ -24,7 +24,9 @@ import (
 
 // Result describes what happened to a single file during a filter run.
 type Result struct {
-	Path      string
+	Path      string // absolute path
+	Rel       string // slash-separated path relative to Options.Dir
+	IsDir     bool
 	Excluded  bool
 	Protected bool
 }
@@ -151,6 +153,8 @@ func Run(opts Options) ([]Result, error) {
 
 		r := Result{
 			Path:      path,
+			Rel:       relSlash,
+			IsDir:     d.IsDir(),
 			Excluded:  excluded,
 			Protected: protected,
 		}
@@ -182,7 +186,7 @@ func Run(opts Options) ([]Result, error) {
 
 	// Copy included files to output directory if requested.
 	if outDir != "" {
-		if err := copyResults(results, dir, outDir, opts.DryRun, log); err != nil {
+		if err := copyResults(results, outDir, opts.DryRun, log); err != nil {
 			return results, err
 		}
 	}
@@ -218,20 +222,15 @@ func compilePatterns(files []string) (*ignore.GitIgnore, error) {
 	return ignore.CompileIgnoreLines(lines...), nil
 }
 
-// copyResults copies each included file from srcRoot to dstRoot, preserving
-// the relative sub-tree.
-func copyResults(results []Result, srcRoot, dstRoot string, dryRun bool, log *slog.Logger) error {
+// copyResults copies each included file to dstRoot, preserving the relative
+// sub-tree.
+func copyResults(results []Result, dstRoot string, dryRun bool, log *slog.Logger) error {
 	for _, r := range results {
 		if !r.Included() {
 			continue
 		}
 
-		rel, err := filepath.Rel(srcRoot, r.Path)
-		if err != nil {
-			return err
-		}
-
-		dst := filepath.Join(dstRoot, rel)
+		dst := filepath.Join(dstRoot, filepath.FromSlash(r.Rel))
 
 		info, err := os.Lstat(r.Path)
 		if err != nil {

@@ -41,20 +41,13 @@ func patternFiles(t *testing.T, contents ...string) []string {
 	return paths
 }
 
-// included returns the sorted, slash-separated relative paths of the
-// included results.
-func included(t *testing.T, root string, results []filter.Result) []string {
-	t.Helper()
+// included returns the sorted relative paths of the included results.
+func included(results []filter.Result) []string {
 	var out []string
 	for _, r := range results {
-		if !r.Included() {
-			continue
+		if r.Included() {
+			out = append(out, r.Rel)
 		}
-		rel, err := filepath.Rel(root, r.Path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out = append(out, filepath.ToSlash(rel))
 	}
 	slices.Sort(out)
 	return out
@@ -122,7 +115,7 @@ func TestRun_Patterns(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got := included(t, root, results); !slices.Equal(got, tc.want) {
+			if got := included(results); !slices.Equal(got, tc.want) {
 				t.Errorf("included = %v, want %v", got, tc.want)
 			}
 		})
@@ -254,7 +247,7 @@ func TestRun_Permissions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if got := included(t, root, results); !slices.Contains(got, "main.go") {
+		if got := included(results); !slices.Contains(got, "main.go") {
 			t.Errorf("main.go missing from %v", got)
 		}
 	})

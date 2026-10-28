@@ -43,6 +43,7 @@ func NewRootCmd(version string) *cobra.Command {
 		explain         bool
 		check           bool
 		useGitignore    bool
+		symlinks        bool
 	)
 
 	c := &cobra.Command{
@@ -66,7 +67,7 @@ With --check the excluded paths are printed instead and the command exits 1
 if there are any, e.g. to fail CI when forbidden files are present.
 
 When --output is given, included files are copied to that directory, preserving
-the relative path structure.  Combined with --dry-run, the tool prints what it
+the relative path structure, file permissions and modification times.  Combined with --dry-run, the tool prints what it
 would copy without making any changes.`,
 		Version:      version,
 		Args:         cobra.MaximumNArgs(1),
@@ -89,6 +90,8 @@ would copy without making any changes.`,
 		"enable verbose (debug) output (env: "+EnvVerbose+")")
 	c.Flags().BoolVarP(&quiet, "quiet", "q", false,
 		"suppress non-error log output (env: "+EnvQuiet+")")
+	c.Flags().BoolVar(&symlinks, "preserve-symlinks", false,
+		"with --output, recreate symlinks instead of skipping them (never followed)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print what would be done without making any changes")
 	c.Flags().BoolVar(&check, "check", false,
@@ -104,14 +107,15 @@ would copy without making any changes.`,
 
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runCmd(cmd, args, filter.Options{
-			ExcludeFiles:    excludeFiles,
-			ProtectFiles:    protectFiles,
-			ExcludePatterns: excludePatterns,
-			ProtectPatterns: protectPatterns,
-			UseGitignore:    useGitignore,
-			OutputDir:       outputDir,
-			DryRun:          dryRun,
-			Stdin:           cmd.InOrStdin(),
+			ExcludeFiles:     excludeFiles,
+			ProtectFiles:     protectFiles,
+			ExcludePatterns:  excludePatterns,
+			ProtectPatterns:  protectPatterns,
+			UseGitignore:     useGitignore,
+			PreserveSymlinks: symlinks,
+			OutputDir:        outputDir,
+			DryRun:           dryRun,
+			Stdin:            cmd.InOrStdin(),
 		}, verbose, quiet, null, explain, check)
 	}
 

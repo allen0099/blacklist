@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
@@ -68,6 +69,9 @@ type Options struct {
 	// OutputDir, when non-empty, causes included files to be copied there
 	// preserving the relative directory structure.
 	OutputDir string
+	// PreserveSymlinks recreates symlinks in OutputDir instead of skipping
+	// them.  Links are copied as-is and never followed.
+	PreserveSymlinks bool
 	// DryRun prevents any file-system writes while still printing what would
 	// happen.
 	DryRun bool
@@ -236,7 +240,7 @@ func Run(opts Options) ([]Result, error) {
 
 	// Copy included files to output directory if requested.
 	if outDir != "" {
-		if err := copyResults(results, outDir, opts.DryRun, log); err != nil {
+		if err := copyResults(results, outDir, opts, log); err != nil {
 			return results, err
 		}
 	}
@@ -343,8 +347,14 @@ func (r *rules) match(path string) (bool, string) {
 }
 
 // copyResults copies each included file to dstRoot, preserving the relative
-// sub-tree.
-func copyResults(results []Result, dstRoot string, dryRun bool, log *slog.Logger) error {
+// sub-tree, permissions and modification times.
+func copyResults(results []Result, dstRoot string, opts Options, log *slog.Logger) error {
+	type dirTime struct {
+		path  string
+		mtime time.Time
+	}
+	var dirs []dirTime
+
 	for _, r := range results {
 		if !r.Included() {
 			continue
@@ -357,14 +367,24 @@ func copyResults(results []Result, dstRoot string, dryRun bool, log *slog.Logger
 			return fmt.Errorf("stat %q: %w", r.Path, err)
 		}
 
-		// Skip symlinks: following them could copy data from outside srcRoot.
-		if info.Mode()&os.ModeSymlink != 0 {
-			log.Debug("skipping symlink", "path", r.Path)
-			continue
-		}
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			// Never follow symlinks: that could copy data from outside the
+			// source tree.  Recreate them as links only when asked to.
+			if !opts.PreserveSymlinks {
+				log.Debug("skipping symlink", "path", r.Path)
+				continue
+			}
+			if opts.DryRun {
+				log.Info("dry-run: would link", "src", r.Path, "dst", dst)
+				continue
+			}
+			if err := copySymlink(r.Path, dst); err != nil {
+				return err
+			}
 
-		if info.IsDir() {
-			if dryRun {
+		case info.IsDir():
+			if opts.DryRun {
 				log.Info("dry-run: would create directory", "dst", dst)
 				continue
 			}
@@ -372,27 +392,62 @@ func copyResults(results []Result, dstRoot string, dryRun bool, log *slog.Logger
 			if err := os.MkdirAll(dst, info.Mode().Perm()|0o700); err != nil {
 				return fmt.Errorf("creating directory %q: %w", dst, err)
 			}
-			log.Debug("created directory", "dst", dst)
-			continue
-		}
+			dirs = append(dirs, dirTime{dst, info.ModTime()})
 
-		if dryRun {
-			log.Info("dry-run: would copy", "src", r.Path, "dst", dst)
-			continue
-		}
-
-		if err := copyFile(r.Path, dst, info.Mode()); err != nil {
-			return err
+		default:
+			if opts.DryRun {
+				log.Info("dry-run: would copy", "src", r.Path, "dst", dst)
+				continue
+			}
+			if err := copyFile(r.Path, dst, info); err != nil {
+				return err
+			}
 		}
 		log.Debug("copied", "src", r.Path, "dst", dst)
+	}
+
+	// Directory times last: creating entries inside a directory updates it.
+	for _, d := range dirs {
+		if err := os.Chtimes(d.path, time.Time{}, d.mtime); err != nil {
+			return fmt.Errorf("setting times on %q: %w", d.path, err)
+		}
 	}
 	return nil
 }
 
-// copyFile copies src to dst, creating parent directories as needed.
-func copyFile(src, dst string, mode fs.FileMode) (err error) {
+// replace prepares dst to be written: it creates the parent directories and
+// removes an existing entry, so a stale symlink in the output is never
+// written through.
+func replace(dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("creating parent directories for %q: %w", dst, err)
+	}
+	if err := os.Remove(dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("replacing %q: %w", dst, err)
+	}
+	return nil
+}
+
+// copySymlink recreates the symlink src at dst with the same target.
+func copySymlink(src, dst string) error {
+	target, err := os.Readlink(src)
+	if err != nil {
+		return fmt.Errorf("reading link %q: %w", src, err)
+	}
+	if err := replace(dst); err != nil {
+		return err
+	}
+	if err := os.Symlink(target, dst); err != nil {
+		return fmt.Errorf("creating link %q: %w", dst, err)
+	}
+	return nil
+}
+
+// copyFile copies src to dst with the permissions and modification time
+// from info.
+func copyFile(src, dst string, info fs.FileInfo) (err error) {
+	if err := replace(dst); err != nil {
+		return err
 	}
 
 	in, err := os.Open(src)
@@ -401,7 +456,7 @@ func copyFile(src, dst string, mode fs.FileMode) (err error) {
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("creating destination %q: %w", dst, err)
 	}
@@ -414,6 +469,13 @@ func copyFile(src, dst string, mode fs.FileMode) (err error) {
 
 	if _, err := io.Copy(out, in); err != nil {
 		return fmt.Errorf("copying %q to %q: %w", src, dst, err)
+	}
+	// Chmod after creation so the umask does not alter the copied mode.
+	if err := out.Chmod(info.Mode().Perm()); err != nil {
+		return fmt.Errorf("setting mode on %q: %w", dst, err)
+	}
+	if err := os.Chtimes(dst, time.Time{}, info.ModTime()); err != nil {
+		return fmt.Errorf("setting times on %q: %w", dst, err)
 	}
 	return nil
 }

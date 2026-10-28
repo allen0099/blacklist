@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/allen0099/blacklist/internal/filter"
 )
@@ -231,6 +232,70 @@ func TestRun_Copy(t *testing.T) {
 		}
 		if _, err := os.Lstat(filepath.Join(out, "link")); !os.IsNotExist(err) {
 			t.Error("symlink should not be copied")
+		}
+	})
+
+	t.Run("preserves mode and times", func(t *testing.T) {
+		src := makeTree(t, "d/run.sh")
+		mtime := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
+		script := filepath.Join(src, "d", "run.sh")
+		if err := os.Chmod(script, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{script, filepath.Join(src, "d")} {
+			if err := os.Chtimes(p, mtime, mtime); err != nil {
+				t.Fatal(err)
+			}
+		}
+		out := t.TempDir()
+		if _, err := filter.Run(filter.Options{Dir: src, OutputDir: out}); err != nil {
+			t.Fatal(err)
+		}
+		for _, rel := range []string{"d", "d/run.sh"} {
+			info, err := os.Stat(filepath.Join(out, rel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !info.ModTime().Equal(mtime) {
+				t.Errorf("%s mtime = %v, want %v", rel, info.ModTime(), mtime)
+			}
+			if rel == "d/run.sh" && runtime.GOOS != "windows" && info.Mode().Perm() != 0o750 {
+				t.Errorf("%s mode = %v, want 0750", rel, info.Mode().Perm())
+			}
+		}
+	})
+
+	t.Run("preserve symlinks", func(t *testing.T) {
+		src := makeTree(t, "a.go")
+		if err := os.Symlink("a.go", filepath.Join(src, "link")); err != nil {
+			t.Skip("symlinks unsupported:", err)
+		}
+		out := t.TempDir()
+		for range 2 { // the second run replaces the existing link
+			if _, err := filter.Run(filter.Options{Dir: src, OutputDir: out, PreserveSymlinks: true}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if target, err := os.Readlink(filepath.Join(out, "link")); err != nil || target != "a.go" {
+			t.Errorf("link target = %q, %v", target, err)
+		}
+	})
+
+	t.Run("stale symlink in output is not written through", func(t *testing.T) {
+		src := makeTree(t, "a.go")
+		victim := filepath.Join(t.TempDir(), "victim")
+		if err := os.WriteFile(victim, []byte("safe"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := t.TempDir()
+		if err := os.Symlink(victim, filepath.Join(out, "a.go")); err != nil {
+			t.Skip("symlinks unsupported:", err)
+		}
+		if _, err := filter.Run(filter.Options{Dir: src, OutputDir: out}); err != nil {
+			t.Fatal(err)
+		}
+		if data, _ := os.ReadFile(victim); string(data) != "safe" {
+			t.Errorf("file outside output was overwritten: %q", data)
 		}
 	})
 

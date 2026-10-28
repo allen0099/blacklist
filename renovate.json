@@ -1,24 +1,46 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    ":semanticCommits",
+    ":automergeAll"
   ],
-  "schedule": ["before 6am on monday"],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
+  "minimumReleaseAge": "3 days",
+  "postUpdateOptions": [
+    "gomodTidy"
+  ],
   "packageRules": [
     {
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["digest"],
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchUpdateTypes": [
+        "digest"
+      ],
       "enabled": false
     },
     {
-      "matchManagers": ["gomod", "github-actions", "dockerfile"],
-      "groupName": "all dependencies",
-      "automerge": false
+      "description": "Shipped in the binary or image: fix(deps) triggers a release-please patch release",
+      "matchManagers": [
+        "gomod",
+        "dockerfile"
+      ],
+      "semanticCommitType": "fix"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "semanticCommitType": "ci",
+      "groupName": "github actions"
     }
   ],
   "vulnerabilityAlerts": {
-    "enabled": true,
-    "labels": ["security"]
+    "labels": [
+      "security"
+    ]
   }
 }

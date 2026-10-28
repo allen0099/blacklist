@@ -41,6 +41,7 @@ func NewRootCmd(version string) *cobra.Command {
 		dryRun          bool
 		null            bool
 		explain         bool
+		check           bool
 	)
 
 	c := &cobra.Command{
@@ -59,6 +60,9 @@ Priority: protect > exclude.
 
 Included files (not directories) are printed to stdout relative to the
 directory, ready for tar -T, rsync --files-from or zip -@.
+
+With --check the excluded paths are printed instead and the command exits 1
+if there are any, e.g. to fail CI when forbidden files are present.
 
 When --output is given, included files are copied to that directory, preserving
 the relative path structure.  Combined with --dry-run, the tool prints what it
@@ -84,6 +88,8 @@ would copy without making any changes.`,
 		"suppress non-error log output (env: "+EnvQuiet+")")
 	c.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print what would be done without making any changes")
+	c.Flags().BoolVar(&check, "check", false,
+		"list excluded paths instead and exit 1 if there are any (CI guard)")
 	c.Flags().BoolVar(&explain, "explain", false,
 		"list every path with its verdict and the rule that decided it")
 	c.Flags().BoolVarP(&null, "null", "0", false,
@@ -91,6 +97,7 @@ would copy without making any changes.`,
 
 	// verbose and quiet are mutually exclusive.
 	c.MarkFlagsMutuallyExclusive("verbose", "quiet")
+	c.MarkFlagsMutuallyExclusive("check", "output")
 
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		return runCmd(cmd, args, filter.Options{
@@ -101,7 +108,7 @@ would copy without making any changes.`,
 			OutputDir:       outputDir,
 			DryRun:          dryRun,
 			Stdin:           cmd.InOrStdin(),
-		}, verbose, quiet, null, explain)
+		}, verbose, quiet, null, explain, check)
 	}
 
 	return c
@@ -118,7 +125,7 @@ func runCmd(
 	cmd *cobra.Command,
 	args []string,
 	opts filter.Options,
-	verbose, quiet, null, explain bool,
+	verbose, quiet, null, explain, check bool,
 ) error {
 	// Apply environment-variable defaults when the flags were not explicitly
 	// set on the command line.  An explicit flag always wins.
@@ -154,18 +161,28 @@ func runCmd(
 		return err
 	}
 
-	// Print included files (not directories, so tar -T does not recurse into
-	// them) relative to dir.
+	// Print paths relative to dir: included files (not directories, so tar -T
+	// does not recurse into them), or with --check the excluded paths.
 	sep := "\n"
 	if null {
 		sep = "\x00"
 	}
 	out := cmd.OutOrStdout()
+	var violations int
 	for _, r := range results {
+		if !r.Included() {
+			violations++
+		}
+		listed := r.Included() && !r.IsDir
+		if check {
+			listed = !r.Included()
+		}
 		switch {
 		case explain:
 			fmt.Fprint(out, explainLine(r)+sep)
-		case r.Included() && !r.IsDir:
+		case listed && r.IsDir:
+			fmt.Fprint(out, r.Rel+"/"+sep)
+		case listed:
 			fmt.Fprint(out, r.Rel+sep)
 		}
 	}
@@ -188,6 +205,9 @@ func runCmd(
 		"excluded", excluded,
 		"protected", protected)
 
+	if check && violations > 0 {
+		return fmt.Errorf("check failed: %d path(s) match exclusion rules", violations)
+	}
 	return nil
 }
 

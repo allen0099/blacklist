@@ -110,6 +110,25 @@ func TestExplain(t *testing.T) {
 	}
 }
 
+func TestCheck(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "")
+	writeFile(t, dir, ".env", "")
+	writeFile(t, dir, "secrets/key.pem", "")
+
+	out, stderr, err := run(t, "-q", "--check", "-E", ".env", "-E", "secrets/", dir)
+	if err == nil || !strings.Contains(stderr, "2 path(s)") {
+		t.Errorf("expected check failure for 2 paths, got err=%v stderr=%s", err, stderr)
+	}
+	if want := ".env\nsecrets/\n"; out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+
+	if out, _, err := run(t, "-q", "--check", "-E", "*.log", dir); err != nil || out != "" {
+		t.Errorf("clean tree: err=%v out=%q", err, out)
+	}
+}
+
 func TestVerbosity(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", "")
@@ -156,6 +175,7 @@ func TestErrors(t *testing.T) {
 		"verbose and quiet": {"--verbose", "--quiet", t.TempDir()},
 		"missing directory": {"/nonexistent-dir-xyz-abc"},
 		"too many args":     {"dir1", "dir2"},
+		"check and output":  {"--check", "-o", t.TempDir(), t.TempDir()},
 	} {
 		if _, _, err := run(t, args...); err == nil {
 			t.Errorf("%s: expected error", name)

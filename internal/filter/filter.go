@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	ignore "github.com/sabhiram/go-gitignore"
 )
@@ -79,6 +80,18 @@ func Run(opts Options) ([]Result, error) {
 		return nil, fmt.Errorf("%q is not a directory", dir)
 	}
 
+	// Resolve the output directory.  Writing into the source tree itself (or
+	// into a parent of it) would overwrite the files being read.
+	var outDir string
+	if opts.OutputDir != "" {
+		if outDir, err = filepath.Abs(opts.OutputDir); err != nil {
+			return nil, fmt.Errorf("resolving output directory: %w", err)
+		}
+		if within(outDir, dir) {
+			return nil, fmt.Errorf("output directory %q must not contain the source directory %q", outDir, dir)
+		}
+	}
+
 	// Compile patterns.
 	excludeMatcher, err := compilePatterns(opts.ExcludeFiles)
 	if err != nil {
@@ -95,6 +108,9 @@ func Run(opts Options) ([]Result, error) {
 		"protectFiles", opts.ProtectFiles)
 
 	var results []Result
+	// excludedDir is the excluded (unprotected) directory whose subtree is
+	// being walked, so that its descendants inherit the exclusion.
+	var excludedDir string
 
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -113,6 +129,11 @@ func Run(opts Options) ([]Result, error) {
 			return nil
 		}
 
+		// Never walk into the output directory when it lives inside dir.
+		if d.IsDir() && path == outDir {
+			return fs.SkipDir
+		}
+
 		// Use forward slashes for consistent cross-platform matching.
 		// Append a trailing slash for directories so that patterns like
 		// "vendor/" are correctly recognised as directory-only rules.
@@ -122,7 +143,10 @@ func Run(opts Options) ([]Result, error) {
 			matchPath = relSlash + "/"
 		}
 
-		excluded := excludeMatcher != nil && excludeMatcher.MatchesPath(matchPath)
+		if excludedDir != "" && !strings.HasPrefix(relSlash, excludedDir) {
+			excludedDir = ""
+		}
+		excluded := excludedDir != "" || (excludeMatcher != nil && excludeMatcher.MatchesPath(matchPath))
 		protected := protectMatcher != nil && protectMatcher.MatchesPath(matchPath)
 
 		r := Result{
@@ -139,10 +163,15 @@ func Run(opts Options) ([]Result, error) {
 
 		results = append(results, r)
 
-		// If the directory itself is excluded and not protected, skip its
-		// subtree.
+		// An excluded, unprotected directory: skip its subtree unless protect
+		// rules could still keep something inside it.
 		if d.IsDir() && excluded && !protected {
-			return fs.SkipDir
+			if protectMatcher == nil {
+				return fs.SkipDir
+			}
+			if excludedDir == "" {
+				excludedDir = matchPath
+			}
 		}
 
 		return nil
@@ -152,13 +181,19 @@ func Run(opts Options) ([]Result, error) {
 	}
 
 	// Copy included files to output directory if requested.
-	if opts.OutputDir != "" {
-		if err := copyResults(results, dir, opts.OutputDir, opts.DryRun, log); err != nil {
+	if outDir != "" {
+		if err := copyResults(results, dir, outDir, opts.DryRun, log); err != nil {
 			return results, err
 		}
 	}
 
 	return results, nil
+}
+
+// within reports whether child is parent itself or lies inside it.
+func within(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // compilePatterns loads each file and returns a single combined Matcher.
@@ -241,7 +276,8 @@ func copyResults(results []Result, srcRoot, dstRoot string, dryRun bool, log *sl
 				log.Info("dry-run: would create directory", "dst", dst)
 				continue
 			}
-			if err := os.MkdirAll(dst, info.Mode()); err != nil {
+			// Keep the owner's write bit so the directory can be filled.
+			if err := os.MkdirAll(dst, info.Mode().Perm()|0o700); err != nil {
 				return fmt.Errorf("creating directory %q: %w", dst, err)
 			}
 			log.Debug("created directory", "dst", dst)
@@ -262,7 +298,7 @@ func copyResults(results []Result, srcRoot, dstRoot string, dryRun bool, log *sl
 }
 
 // copyFile copies src to dst, creating parent directories as needed.
-func copyFile(src, dst string, mode fs.FileMode) error {
+func copyFile(src, dst string, mode fs.FileMode) (err error) {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("creating parent directories for %q: %w", dst, err)
 	}
@@ -277,7 +313,12 @@ func copyFile(src, dst string, mode fs.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("creating destination %q: %w", dst, err)
 	}
-	defer out.Close()
+	defer func() {
+		// A failed Close can mean the data never reached the disk.
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("closing destination %q: %w", dst, cerr)
+		}
+	}()
 
 	if _, err := io.Copy(out, in); err != nil {
 		return fmt.Errorf("copying %q to %q: %w", src, dst, err)

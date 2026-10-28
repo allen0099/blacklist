@@ -4,484 +4,244 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/allen0099/blacklist/internal/filter"
 )
 
-// helpers ----------------------------------------------------------------
-
 // makeTree creates a temporary directory containing the given file paths
 // (relative to the returned root). Directories are created automatically.
-func makeTree(t *testing.T, files []string) string {
+func makeTree(t *testing.T, files ...string) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, f := range files {
 		full := filepath.Join(root, filepath.FromSlash(f))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatalf("makeTree mkdir: %v", err)
+			t.Fatal(err)
 		}
 		if err := os.WriteFile(full, []byte("content"), 0o644); err != nil {
-			t.Fatalf("makeTree writefile: %v", err)
+			t.Fatal(err)
 		}
 	}
 	return root
 }
 
-// writePatternFile writes lines to a temp file and returns its path.
-func writePatternFile(t *testing.T, lines ...string) string {
+// patternFiles writes each content string to its own temp file.
+func patternFiles(t *testing.T, contents ...string) []string {
 	t.Helper()
-	f, err := os.CreateTemp(t.TempDir(), "patterns-*.txt")
-	if err != nil {
-		t.Fatalf("writePatternFile: %v", err)
-	}
-	for _, l := range lines {
-		if _, err := f.WriteString(l + "\n"); err != nil {
-			_ = f.Close()
-			t.Fatalf("writePatternFile write: %v", err)
+	var paths []string
+	for i, c := range contents {
+		p := filepath.Join(t.TempDir(), "patterns"+string(rune('a'+i)))
+		if err := os.WriteFile(p, []byte(c), 0o644); err != nil {
+			t.Fatal(err)
 		}
+		paths = append(paths, p)
 	}
-	if err := f.Close(); err != nil {
-		t.Fatalf("writePatternFile close: %v", err)
-	}
-	return f.Name()
+	return paths
 }
 
-// resultMap converts a slice of Results to a map[rel]Result for easy lookup.
-func resultMap(t *testing.T, root string, results []filter.Result) map[string]filter.Result {
+// included returns the sorted, slash-separated relative paths of the
+// included results.
+func included(t *testing.T, root string, results []filter.Result) []string {
 	t.Helper()
-	m := make(map[string]filter.Result, len(results))
+	var out []string
 	for _, r := range results {
-		rel, err := filepath.Rel(root, r.Path)
-		if err != nil {
-			t.Fatalf("resultMap Rel: %v", err)
-		}
-		m[filepath.ToSlash(rel)] = r
-	}
-	return m
-}
-
-// tests ------------------------------------------------------------------
-
-func TestRun_NoPatterns_AllIncluded(t *testing.T) {
-	root := makeTree(t, []string{"a.go", "b.go", "sub/c.go"})
-
-	results, err := filter.Run(filter.Options{Dir: root})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	m := resultMap(t, root, results)
-	for _, key := range []string{"a.go", "b.go", "sub/c.go"} {
-		r, ok := m[key]
-		if !ok {
-			t.Errorf("expected %q in results", key)
+		if !r.Included() {
 			continue
 		}
-		if !r.Included() {
-			t.Errorf("%q should be included when no patterns given", key)
+		rel, err := filepath.Rel(root, r.Path)
+		if err != nil {
+			t.Fatal(err)
 		}
+		out = append(out, filepath.ToSlash(rel))
 	}
+	slices.Sort(out)
+	return out
 }
 
-func TestRun_ExcludePattern(t *testing.T) {
-	root := makeTree(t, []string{"main.go", "main_test.go", "README.md"})
-	ef := writePatternFile(t, "*.md")
-
-	results, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	m := resultMap(t, root, results)
-
-	if !m["main.go"].Included() {
-		t.Error("main.go should be included")
-	}
-	if !m["main_test.go"].Included() {
-		t.Error("main_test.go should be included")
-	}
-	if m["README.md"].Included() {
-		t.Error("README.md should be excluded by *.md pattern")
-	}
-}
-
-func TestRun_ProtectOverridesExclude(t *testing.T) {
-	root := makeTree(t, []string{"keep.txt", "drop.txt"})
-	ef := writePatternFile(t, "*.txt")    // exclude all .txt files
-	pf := writePatternFile(t, "keep.txt") // but protect keep.txt
-
-	results, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef},
-		ProtectFiles: []string{pf},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	m := resultMap(t, root, results)
-
-	if !m["keep.txt"].Included() {
-		t.Error("keep.txt should be included because it is protected")
-	}
-	if !m["keep.txt"].Protected {
-		t.Error("keep.txt should be marked as protected")
-	}
-	if m["drop.txt"].Included() {
-		t.Error("drop.txt should be excluded")
-	}
-}
-
-func TestRun_MultipleExcludeFiles(t *testing.T) {
-	root := makeTree(t, []string{"a.go", "b.log", "c.tmp"})
-	ef1 := writePatternFile(t, "*.log")
-	ef2 := writePatternFile(t, "*.tmp")
-
-	results, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef1, ef2},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	m := resultMap(t, root, results)
-	if !m["a.go"].Included() {
-		t.Error("a.go should be included")
-	}
-	if m["b.log"].Included() {
-		t.Error("b.log should be excluded by ef1")
-	}
-	if m["c.tmp"].Included() {
-		t.Error("c.tmp should be excluded by ef2")
-	}
-}
-
-func TestRun_CommentLines(t *testing.T) {
-	root := makeTree(t, []string{"a.go", "b.txt"})
-	ef := writePatternFile(t, "# this is a comment", "*.txt")
-
-	results, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	m := resultMap(t, root, results)
-	if !m["a.go"].Included() {
-		t.Error("a.go should be included")
-	}
-	if m["b.txt"].Included() {
-		t.Error("b.txt should be excluded")
-	}
-}
-
-func TestRun_DirectoryExclusion(t *testing.T) {
-	root := makeTree(t, []string{"vendor/lib.go", "main.go"})
-	ef := writePatternFile(t, "vendor/")
-
-	results, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	m := resultMap(t, root, results)
-	if !m["main.go"].Included() {
-		t.Error("main.go should be included")
-	}
-	if m["vendor"].Included() {
-		t.Error("vendor directory should be excluded")
-	}
-}
-
-func TestRun_InvalidDirectory(t *testing.T) {
-	_, err := filter.Run(filter.Options{Dir: "/nonexistent-dir-xyz"})
-	if err == nil {
-		t.Error("expected error for nonexistent directory")
-	}
-}
-
-func TestRun_PathIsFile(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "file-*.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-
-	_, err = filter.Run(filter.Options{Dir: f.Name()})
-	if err == nil {
-		t.Error("expected error when Dir points to a file")
-	}
-}
-
-func TestRun_InvalidExcludeFile(t *testing.T) {
-	root := makeTree(t, []string{"a.go"})
-	_, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{"/nonexistent-patterns.txt"},
-	})
-	if err == nil {
-		t.Error("expected error for nonexistent exclude file")
-	}
-}
-
-func TestRun_InvalidProtectFile(t *testing.T) {
-	root := makeTree(t, []string{"a.go"})
-	_, err := filter.Run(filter.Options{
-		Dir:          root,
-		ProtectFiles: []string{"/nonexistent-patterns.txt"},
-	})
-	if err == nil {
-		t.Error("expected error for nonexistent protect file")
-	}
-}
-
-func TestRun_CopyToOutput(t *testing.T) {
-	root := makeTree(t, []string{"keep.go", "drop.log"})
-	ef := writePatternFile(t, "*.log")
-	outDir := t.TempDir()
-
-	_, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef},
-		OutputDir:    outDir,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// keep.go should have been copied
-	dst := filepath.Join(outDir, "keep.go")
-	if _, err := os.Stat(dst); os.IsNotExist(err) {
-		t.Errorf("expected %q to be copied to output dir", "keep.go")
-	}
-
-	// drop.log should NOT have been copied
-	dropped := filepath.Join(outDir, "drop.log")
-	if _, err := os.Stat(dropped); !os.IsNotExist(err) {
-		t.Errorf("expected %q NOT to be copied to output dir", "drop.log")
-	}
-}
-
-func TestRun_DryRunNoCopy(t *testing.T) {
-	root := makeTree(t, []string{"keep.go", "drop.log"})
-	ef := writePatternFile(t, "*.log")
-	outDir := t.TempDir()
-
-	_, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef},
-		OutputDir:    outDir,
-		DryRun:       true,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Nothing should have been copied in dry-run mode.
-	dst := filepath.Join(outDir, "keep.go")
-	if _, err := os.Stat(dst); !os.IsNotExist(err) {
-		t.Errorf("dry-run: expected %q NOT to be created", "keep.go")
-	}
-}
-
-func TestRun_CopySubdirectory(t *testing.T) {
-	root := makeTree(t, []string{"src/main.go", "src/util.go", "README.md"})
-	outDir := t.TempDir()
-
-	_, err := filter.Run(filter.Options{
-		Dir:       root,
-		OutputDir: outDir,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	for _, rel := range []string{"src/main.go", "src/util.go", "README.md"} {
-		dst := filepath.Join(outDir, filepath.FromSlash(rel))
-		if _, err := os.Stat(dst); os.IsNotExist(err) {
-			t.Errorf("expected %q to be copied to output dir", rel)
-		}
-	}
-}
-
-func TestResult_Included(t *testing.T) {
+func TestRun_Patterns(t *testing.T) {
 	tests := []struct {
-		name     string
-		r        filter.Result
-		expected bool
+		name             string
+		files            []string
+		exclude, protect []string // pattern file contents
+		want             []string
 	}{
-		{"not excluded not protected", filter.Result{Excluded: false, Protected: false}, true},
-		{"excluded not protected", filter.Result{Excluded: true, Protected: false}, false},
-		{"excluded and protected", filter.Result{Excluded: true, Protected: true}, true},
-		{"not excluded but protected", filter.Result{Excluded: false, Protected: true}, true},
+		{
+			name:  "no patterns",
+			files: []string{"a.go", "sub/c.go"},
+			want:  []string{"a.go", "sub", "sub/c.go"},
+		},
+		{
+			name:    "glob",
+			files:   []string{"main.go", "README.md"},
+			exclude: []string{"*.md\n"},
+			want:    []string{"main.go"},
+		},
+		{
+			name:    "comments, CRLF, no trailing newline",
+			files:   []string{"a.go", "b.txt", "c.log"},
+			exclude: []string{"# comment\r\n*.txt\r\n*.log"},
+			want:    []string{"a.go"},
+		},
+		{
+			name:    "multiple exclude files",
+			files:   []string{"a.go", "b.log", "c.tmp"},
+			exclude: []string{"*.log\n", "*.tmp\n"},
+			want:    []string{"a.go"},
+		},
+		{
+			name:    "directory",
+			files:   []string{"vendor/lib.go", "main.go"},
+			exclude: []string{"vendor/\n"},
+			want:    []string{"main.go"},
+		},
+		{
+			name:    "protect beats exclude",
+			files:   []string{"keep1.txt", "keep2.txt", "drop.txt"},
+			exclude: []string{"*.txt\n"},
+			protect: []string{"keep1.txt\n", "keep2.txt\n"},
+			want:    []string{"keep1.txt", "keep2.txt"},
+		},
+		{
+			name:    "protect inside excluded directory",
+			files:   []string{"vendor/keep.go", "vendor/sub/drop.go", "main.go"},
+			exclude: []string{"vendor/\n"},
+			protect: []string{"keep.go\n"},
+			want:    []string{"main.go", "vendor/keep.go"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.r.Included(); got != tc.expected {
-				t.Errorf("Included() = %v, want %v", got, tc.expected)
+			root := makeTree(t, tc.files...)
+			results, err := filter.Run(filter.Options{
+				Dir:          root,
+				ExcludeFiles: patternFiles(t, tc.exclude...),
+				ProtectFiles: patternFiles(t, tc.protect...),
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := included(t, root, results); !slices.Equal(got, tc.want) {
+				t.Errorf("included = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestRun_DryRunWithDirectory(t *testing.T) {
-	root := makeTree(t, []string{"sub/file.go", "main.go"})
-	outDir := t.TempDir()
-
-	_, err := filter.Run(filter.Options{
-		Dir:       root,
-		OutputDir: outDir,
-		DryRun:    true,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+func TestRun_Errors(t *testing.T) {
+	root := makeTree(t, "a.go")
+	tests := map[string]filter.Options{
+		"missing directory":      {Dir: "/nonexistent-dir-xyz"},
+		"directory is a file":    {Dir: filepath.Join(root, "a.go")},
+		"missing exclude file":   {Dir: root, ExcludeFiles: []string{"/nonexistent-patterns"}},
+		"missing protect file":   {Dir: root, ProtectFiles: []string{"/nonexistent-patterns"}},
+		"output is source":       {Dir: root, OutputDir: root},
+		"output is above source": {Dir: root, OutputDir: filepath.Dir(root)},
 	}
-
-	// In dry-run mode, no files or directories should be created.
-	entries, _ := os.ReadDir(outDir)
-	if len(entries) != 0 {
-		t.Errorf("dry-run: expected empty output dir, got %d entries", len(entries))
+	for name, opts := range tests {
+		if _, err := filter.Run(opts); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
 	}
-}
-
-func TestRun_PatternFileNoTrailingNewline(t *testing.T) {
-	root := makeTree(t, []string{"a.go", "b.log"})
-
-	// Write a pattern file without a trailing newline.
-	patFile := filepath.Join(t.TempDir(), "patterns.txt")
-	if err := os.WriteFile(patFile, []byte("*.log"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	results, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{patFile},
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	m := resultMap(t, root, results)
-	if !m["a.go"].Included() {
-		t.Error("a.go should be included")
-	}
-	if m["b.log"].Included() {
-		t.Error("b.log should be excluded by pattern without trailing newline")
+	// The source must survive the rejected self-copy untouched.
+	if data, _ := os.ReadFile(filepath.Join(root, "a.go")); string(data) != "content" {
+		t.Errorf("source file was modified: %q", data)
 	}
 }
 
-func TestRun_MultipleProtectFiles(t *testing.T) {
-	root := makeTree(t, []string{"keep1.txt", "keep2.txt", "drop.txt"})
-	ef := writePatternFile(t, "*.txt")
-	pf1 := writePatternFile(t, "keep1.txt")
-	pf2 := writePatternFile(t, "keep2.txt")
+func TestRun_Copy(t *testing.T) {
+	root := makeTree(t, "src/main.go", "README.md", "drop.log")
+	ef := patternFiles(t, "*.log\n")
 
-	results, err := filter.Run(filter.Options{
-		Dir:          root,
-		ExcludeFiles: []string{ef},
-		ProtectFiles: []string{pf1, pf2},
+	t.Run("copies included files", func(t *testing.T) {
+		out := t.TempDir()
+		if _, err := filter.Run(filter.Options{Dir: root, ExcludeFiles: ef, OutputDir: out}); err != nil {
+			t.Fatal(err)
+		}
+		for _, rel := range []string{"src/main.go", "README.md"} {
+			if data, err := os.ReadFile(filepath.Join(out, rel)); err != nil || string(data) != "content" {
+				t.Errorf("%s: got %q, %v", rel, data, err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(out, "drop.log")); !os.IsNotExist(err) {
+			t.Error("drop.log should not be copied")
+		}
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 
-	m := resultMap(t, root, results)
-	if !m["keep1.txt"].Included() {
-		t.Error("keep1.txt should be included (protected by pf1)")
-	}
-	if !m["keep2.txt"].Included() {
-		t.Error("keep2.txt should be included (protected by pf2)")
-	}
-	if m["drop.txt"].Included() {
-		t.Error("drop.txt should be excluded")
-	}
+	t.Run("dry run writes nothing", func(t *testing.T) {
+		out := t.TempDir()
+		if _, err := filter.Run(filter.Options{Dir: root, OutputDir: out, DryRun: true}); err != nil {
+			t.Fatal(err)
+		}
+		if entries, _ := os.ReadDir(out); len(entries) != 0 {
+			t.Errorf("expected empty output dir, got %d entries", len(entries))
+		}
+	})
+
+	t.Run("output inside source is not walked", func(t *testing.T) {
+		src := makeTree(t, "a.go")
+		out := filepath.Join(src, "dist")
+		for range 2 {
+			if _, err := filter.Run(filter.Options{Dir: src, OutputDir: out}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(out, "dist")); !os.IsNotExist(err) {
+			t.Error("output directory was copied into itself")
+		}
+	})
 }
 
-func TestRun_CopyOutput_UnreadableSource(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod permission semantics are not enforced on Windows")
+func TestRun_Permissions(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("permission semantics need a non-root Unix user")
 	}
-	if os.Getuid() == 0 {
-		t.Skip("running as root; file permission tests are not meaningful")
+	// chmod sets mode on path and restores 0o755 after the test.
+	chmod := func(t *testing.T, path string, mode os.FileMode) {
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(path, 0o755) }) //nolint:errcheck
 	}
-	root := makeTree(t, []string{"secret.go"})
-	outDir := t.TempDir()
 
-	// Make the file unreadable.
-	secretPath := filepath.Join(root, "secret.go")
-	if err := os.Chmod(secretPath, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(secretPath, 0o644) }) //nolint:errcheck
-
-	_, err := filter.Run(filter.Options{
-		Dir:       root,
-		OutputDir: outDir,
+	t.Run("read-only source directory is copied", func(t *testing.T) {
+		root := makeTree(t, "ro/f.go")
+		chmod(t, filepath.Join(root, "ro"), 0o555)
+		out := t.TempDir()
+		if _, err := filter.Run(filter.Options{Dir: root, OutputDir: out}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(out, "ro", "f.go")); err != nil {
+			t.Error(err)
+		}
 	})
-	if err == nil {
-		t.Error("expected error when source file is unreadable")
-	}
-}
 
-func TestRun_CopyOutput_UnwritableDestination(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod permission semantics are not enforced on Windows")
-	}
-	if os.Getuid() == 0 {
-		t.Skip("running as root; file permission tests are not meaningful")
-	}
-	root := makeTree(t, []string{"file.go"})
-	outDir := t.TempDir()
-
-	// Make the output directory read-only so we can't create files in it.
-	if err := os.Chmod(outDir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(outDir, 0o755) }) //nolint:errcheck
-
-	_, err := filter.Run(filter.Options{
-		Dir:       root,
-		OutputDir: outDir,
+	t.Run("unreadable source file", func(t *testing.T) {
+		root := makeTree(t, "secret.go")
+		chmod(t, filepath.Join(root, "secret.go"), 0o000)
+		if _, err := filter.Run(filter.Options{Dir: root, OutputDir: t.TempDir()}); err == nil {
+			t.Error("expected error")
+		}
 	})
-	if err == nil {
-		t.Error("expected error when output directory is not writable")
-	}
-}
 
-func TestRun_WalkError(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod permission semantics are not enforced on Windows")
-	}
-	if os.Getuid() == 0 {
-		t.Skip("running as root; permission tests are not meaningful")
-	}
-	root := makeTree(t, []string{"sub/hidden.go", "main.go"})
-	subDir := filepath.Join(root, "sub")
+	t.Run("unwritable output", func(t *testing.T) {
+		out := t.TempDir()
+		chmod(t, out, 0o555)
+		if _, err := filter.Run(filter.Options{Dir: makeTree(t, "f.go"), OutputDir: out}); err == nil {
+			t.Error("expected error")
+		}
+	})
 
-	// Make the sub-directory inaccessible so WalkDir receives an error.
-	if err := os.Chmod(subDir, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(subDir, 0o755) }) //nolint:errcheck
-
-	// The walker should continue past the error (it logs a warning).
-	results, err := filter.Run(filter.Options{Dir: root})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// At least main.go should still be present.
-	m := resultMap(t, root, results)
-	if _, ok := m["main.go"]; !ok {
-		t.Error("main.go should still appear despite walk error in sub/")
-	}
+	t.Run("walk error is skipped", func(t *testing.T) {
+		root := makeTree(t, "sub/hidden.go", "main.go")
+		chmod(t, filepath.Join(root, "sub"), 0o000)
+		results, err := filter.Run(filter.Options{Dir: root})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := included(t, root, results); !slices.Contains(got, "main.go") {
+			t.Errorf("main.go missing from %v", got)
+		}
+	})
 }

@@ -119,9 +119,13 @@ vendor/
 build/**/*.tmp
 ```
 
-With `--use-gitignore`, each `.gitignore` applies to its own directory, as in
-git. One difference: a `!pattern` in a deeper `.gitignore` cannot re-include a
-path that a parent `.gitignore` ignores.
+Matching follows git exactly (the test suite compares against `git` itself).
+An excluded directory excludes everything inside it, and a protected directory
+protects everything inside it. Note that `./app` is not a valid pattern, in git
+or here; write `/app` to anchor a pattern to the directory.
+
+With `--use-gitignore`, each `.gitignore` applies to its own directory and a
+deeper one takes precedence, as in git.
 
 ## Examples
 

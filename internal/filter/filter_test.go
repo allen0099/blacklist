@@ -212,8 +212,10 @@ func TestRun_Copy(t *testing.T) {
 	})
 
 	t.Run("dry run writes nothing", func(t *testing.T) {
+		src := makeTree(t, "sub/file.go")
+		_ = os.Symlink("sub", filepath.Join(src, "link"))
 		out := t.TempDir()
-		if _, err := filter.Run(filter.Options{Dir: root, OutputDir: out, DryRun: true}); err != nil {
+		if _, err := filter.Run(filter.Options{Dir: src, OutputDir: out, DryRun: true, PreserveSymlinks: true}); err != nil {
 			t.Fatal(err)
 		}
 		if entries, _ := os.ReadDir(out); len(entries) != 0 {
@@ -313,6 +315,34 @@ func TestRun_Copy(t *testing.T) {
 	})
 }
 
+func TestRun_OutputConflicts(t *testing.T) {
+	// Each source path collides with a non-empty directory or a file of the
+	// other kind already in the output; that must fail, not be clobbered.
+	tests := map[string]struct {
+		src, out string // relative paths created as files
+		symlink  bool
+	}{
+		"file over non-empty dir": {src: "a.go", out: "a.go/x"},
+		"dir over file":           {src: "d/f", out: "d"},
+		"link over non-empty dir": {src: "target", out: "link/x", symlink: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			src := makeTree(t, tc.src)
+			if tc.symlink {
+				if err := os.Symlink("target", filepath.Join(src, "link")); err != nil {
+					t.Skip("symlinks unsupported:", err)
+				}
+			}
+			out := makeTree(t, tc.out)
+			_, err := filter.Run(filter.Options{Dir: src, OutputDir: out, PreserveSymlinks: tc.symlink})
+			if err == nil {
+				t.Error("expected error")
+			}
+		})
+	}
+}
+
 func TestRun_Permissions(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Getuid() == 0 {
 		t.Skip("permission semantics need a non-root Unix user")
@@ -349,6 +379,14 @@ func TestRun_Permissions(t *testing.T) {
 		out := t.TempDir()
 		chmod(t, out, 0o555)
 		if _, err := filter.Run(filter.Options{Dir: makeTree(t, "f.go"), OutputDir: out}); err == nil {
+			t.Error("expected error")
+		}
+	})
+
+	t.Run("unreadable .gitignore", func(t *testing.T) {
+		root := makeTree(t, "sub/.gitignore", "main.go")
+		chmod(t, filepath.Join(root, "sub", ".gitignore"), 0o000)
+		if _, err := filter.Run(filter.Options{Dir: root, UseGitignore: true}); err == nil {
 			t.Error("expected error")
 		}
 	})

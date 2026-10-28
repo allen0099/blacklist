@@ -140,6 +140,34 @@ func TestRun_PatternSources(t *testing.T) {
 	}
 }
 
+func TestRun_UseGitignore(t *testing.T) {
+	root := makeTree(t,
+		".git/config", "main.go", "app.log", "build/out",
+		"sub/keep.log", "sub/tmp/x", "sub/a.tmp", "other/a.tmp")
+	for name, content := range map[string]string{
+		".gitignore":     "*.log\nbuild/\n",
+		"sub/.gitignore": "/tmp/\n*.tmp\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := filter.Run(filter.Options{Dir: root, UseGitignore: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{".gitignore", "main.go", "other", "other/a.tmp", "sub", "sub/.gitignore"}
+	if got := included(results); !slices.Equal(got, want) {
+		t.Errorf("included = %v, want %v", got, want)
+	}
+	for _, r := range results {
+		if r.Rel == "sub/a.tmp" && r.ExcludedBy != "sub/.gitignore:2: *.tmp" {
+			t.Errorf("sub/a.tmp excluded by %q", r.ExcludedBy)
+		}
+	}
+}
+
 func TestRun_Errors(t *testing.T) {
 	root := makeTree(t, "a.go")
 	tests := map[string]filter.Options{

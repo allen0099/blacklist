@@ -11,6 +11,7 @@
 package filter
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -61,6 +62,9 @@ type Options struct {
 	ProtectPatterns []string
 	// Stdin is read for a pattern file named "-".
 	Stdin io.Reader
+	// UseGitignore also excludes paths ignored by .gitignore files in the
+	// tree (each applying to its own directory) and the .git directory.
+	UseGitignore bool
 	// OutputDir, when non-empty, causes included files to be copied there
 	// preserving the relative directory structure.
 	OutputDir string
@@ -126,6 +130,15 @@ func Run(opts Options) ([]Result, error) {
 		return nil, fmt.Errorf("compiling protect patterns: %w", err)
 	}
 
+	// gitignores holds the .gitignore rules per directory ("" is the root,
+	// "a/b/" a subdirectory); nil entries mean the directory has none.
+	gitignores := map[string]*rules{}
+	if opts.UseGitignore {
+		if gitignores[""], err = loadGitignore(dir, ""); err != nil {
+			return nil, err
+		}
+	}
+
 	log.Debug("starting filter walk", "dir", dir,
 		"excludeFiles", opts.ExcludeFiles,
 		"protectFiles", opts.ProtectFiles)
@@ -170,6 +183,12 @@ func Run(opts Options) ([]Result, error) {
 			excludedDir = ""
 		}
 		excluded, excludedBy := excludeRules.match(matchPath)
+		if !excluded && opts.UseGitignore {
+			excluded, excludedBy = matchGitignores(gitignores, matchPath)
+			if d.Name() == ".git" {
+				excluded, excludedBy = true, ".git"
+			}
+		}
 		if excludedDir != "" {
 			excluded, excludedBy = true, excludedDirBy
 		}
@@ -204,6 +223,11 @@ func Run(opts Options) ([]Result, error) {
 			}
 		}
 
+		if d.IsDir() && opts.UseGitignore {
+			if gitignores[matchPath], err = loadGitignore(dir, matchPath); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -232,6 +256,16 @@ type rules struct {
 	origins []string // origins[i] names line i+1, e.g. "exclude.txt:3"
 }
 
+// addLines appends the lines of data to lines, labelling each "name:N".
+// CR is stripped so CRLF-edited files match like LF ones.
+func addLines(lines, origins []string, name, data string) ([]string, []string) {
+	for i, line := range strings.Split(data, "\n") {
+		lines = append(lines, strings.TrimSuffix(line, "\r"))
+		origins = append(origins, fmt.Sprintf("%s:%d", name, i+1))
+	}
+	return lines, origins
+}
+
 // loadRules compiles the patterns from files (where "-" reads stdin) followed
 // by patterns.  It returns nil when there are none.
 func loadRules(files, patterns []string, stdin io.Reader) (*rules, error) {
@@ -250,11 +284,7 @@ func loadRules(files, patterns []string, stdin io.Reader) (*rules, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading pattern file %q: %w", f, err)
 		}
-		// Strip CR so CRLF-edited files match like LF ones.
-		for i, line := range strings.Split(string(data), "\n") {
-			lines = append(lines, strings.TrimSuffix(line, "\r"))
-			origins = append(origins, fmt.Sprintf("%s:%d", f, i+1))
-		}
+		lines, origins = addLines(lines, origins, f, string(data))
 	}
 	for _, p := range patterns {
 		lines = append(lines, p)
@@ -264,6 +294,40 @@ func loadRules(files, patterns []string, stdin io.Reader) (*rules, error) {
 		return nil, nil
 	}
 	return &rules{ignore.CompileIgnoreLines(lines...), origins}, nil
+}
+
+// loadGitignore loads the .gitignore of directory relDir ("" or "a/b/") under
+// root, returning nil if it has none.
+func loadGitignore(root, relDir string) (*rules, error) {
+	name := relDir + ".gitignore"
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading %q: %w", name, err)
+	}
+	lines, origins := addLines(nil, nil, name, string(data))
+	return &rules{ignore.CompileIgnoreLines(lines...), origins}, nil
+}
+
+// matchGitignores checks matchPath against the .gitignore of each of its
+// ancestor directories, each relative to its own directory.
+//
+// ponytail: any match excludes, so a deeper "!pattern" cannot re-include a
+// path ignored higher up (go-gitignore does not report negation-only
+// matches); git itself would re-include it.
+func matchGitignores(gitignores map[string]*rules, matchPath string) (bool, string) {
+	for i := 0; ; {
+		if ok, by := gitignores[matchPath[:i]].match(matchPath[i:]); ok {
+			return true, by
+		}
+		j := strings.IndexByte(matchPath[i:], '/')
+		if j < 0 || i+j+1 == len(matchPath) {
+			return false, ""
+		}
+		i += j + 1
+	}
 }
 
 // match reports whether path matches, and if so which rule matched it.

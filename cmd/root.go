@@ -42,6 +42,7 @@ func NewRootCmd(version string) *cobra.Command {
 		null            bool
 		explain         bool
 		check           bool
+		useGitignore    bool
 	)
 
 	c := &cobra.Command{
@@ -80,6 +81,8 @@ would copy without making any changes.`,
 		"exclusion pattern given directly (repeatable)")
 	c.Flags().StringArrayVarP(&protectPatterns, "protect-pattern", "P", nil,
 		"protection pattern given directly (repeatable)")
+	c.Flags().BoolVar(&useGitignore, "use-gitignore", false,
+		"also exclude what the tree's .gitignore files ignore, and .git")
 	c.Flags().StringVarP(&outputDir, "output", "o", "",
 		"output directory: copy included files here (preserving tree structure)")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false,
@@ -105,6 +108,7 @@ would copy without making any changes.`,
 			ProtectFiles:    protectFiles,
 			ExcludePatterns: excludePatterns,
 			ProtectPatterns: protectPatterns,
+			UseGitignore:    useGitignore,
 			OutputDir:       outputDir,
 			DryRun:          dryRun,
 			Stdin:           cmd.InOrStdin(),

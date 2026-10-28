@@ -8,6 +8,7 @@
 //     protect set.
 //   - Priority: protect > exclude.  When a file would be excluded but also
 //     matches a protect rule it is kept (included).
+//   - Both apply to everything inside a matching directory.
 package filter
 
 import (
@@ -22,7 +23,7 @@ import (
 	"strings"
 	"time"
 
-	ignore "github.com/sabhiram/go-gitignore"
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // Result describes what happened to a single file during a filter run.
@@ -136,7 +137,7 @@ func Run(opts Options) ([]Result, error) {
 
 	// gitignores holds the .gitignore rules per directory ("" is the root,
 	// "a/b/" a subdirectory); nil entries mean the directory has none.
-	gitignores := map[string]*rules{}
+	gitignores := map[string]rules{}
 	if opts.UseGitignore {
 		if gitignores[""], err = loadGitignore(dir, ""); err != nil {
 			return nil, err
@@ -148,9 +149,8 @@ func Run(opts Options) ([]Result, error) {
 		"protectFiles", opts.ProtectFiles)
 
 	var results []Result
-	// excludedDir is the excluded (unprotected) directory whose subtree is
-	// being walked, so that its descendants inherit the exclusion.
-	var excludedDir, excludedDirBy string
+	// Descendants of an excluded or protected directory inherit its verdict.
+	var excludedDir, protectedDir inherited
 
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -175,28 +175,22 @@ func Run(opts Options) ([]Result, error) {
 		}
 
 		// Use forward slashes for consistent cross-platform matching.
-		// Append a trailing slash for directories so that patterns like
-		// "vendor/" are correctly recognised as directory-only rules.
 		relSlash := filepath.ToSlash(rel)
-		matchPath := relSlash
-		if d.IsDir() {
-			matchPath = relSlash + "/"
-		}
 
-		if excludedDir != "" && !strings.HasPrefix(relSlash, excludedDir) {
-			excludedDir = ""
-		}
-		excluded, excludedBy := excludeRules.match(matchPath)
+		excluded, excludedBy := excludeRules.match(relSlash, d.IsDir())
 		if !excluded && opts.UseGitignore {
-			excluded, excludedBy = matchGitignores(gitignores, matchPath)
+			excluded, excludedBy = matchGitignores(gitignores, relSlash, d.IsDir())
 			if d.Name() == ".git" {
 				excluded, excludedBy = true, ".git"
 			}
 		}
-		if excludedDir != "" {
-			excluded, excludedBy = true, excludedDirBy
+		if ok, by := excludedDir.get(relSlash); ok {
+			excluded, excludedBy = true, by
 		}
-		protected, protectedBy := protectRules.match(matchPath)
+		protected, protectedBy := protectRules.match(relSlash, d.IsDir())
+		if ok, by := protectedDir.get(relSlash); ok {
+			protected, protectedBy = true, by
+		}
 
 		r := Result{
 			Path:        path,
@@ -216,19 +210,22 @@ func Run(opts Options) ([]Result, error) {
 
 		results = append(results, r)
 
+		if !d.IsDir() {
+			return nil
+		}
 		// An excluded, unprotected directory: skip its subtree unless protect
 		// rules could still keep something inside it.
-		if d.IsDir() && excluded && !protected {
-			if protectRules == nil {
-				return fs.SkipDir
-			}
-			if excludedDir == "" {
-				excludedDir, excludedDirBy = matchPath, excludedBy
-			}
+		if excluded && !protected && len(protectRules) == 0 {
+			return fs.SkipDir
 		}
-
-		if d.IsDir() && opts.UseGitignore {
-			if gitignores[matchPath], err = loadGitignore(dir, matchPath); err != nil {
+		if excluded {
+			excludedDir.set(relSlash, excludedBy)
+		}
+		if protected {
+			protectedDir.set(relSlash, protectedBy)
+		}
+		if opts.UseGitignore {
+			if gitignores[relSlash+"/"], err = loadGitignore(dir, relSlash+"/"); err != nil {
 				return err
 			}
 		}
@@ -254,26 +251,112 @@ func within(parent, child string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// rules is a compiled pattern set that remembers where each line came from.
-type rules struct {
-	gi      *ignore.GitIgnore
-	origins []string // origins[i] names line i+1, e.g. "exclude.txt:3"
+// inherited tracks the outermost directory whose verdict its descendants
+// share.  The walk is depth-first, so one directory at a time is enough.
+type inherited struct{ prefix, by string }
+
+// get reports whether rel lies inside the tracked directory.
+func (h *inherited) get(rel string) (bool, string) {
+	if h.prefix != "" && !strings.HasPrefix(rel, h.prefix) {
+		h.prefix = ""
+	}
+	return h.prefix != "", h.by
 }
 
-// addLines appends the lines of data to lines, labelling each "name:N".
-// CR is stripped so CRLF-edited files match like LF ones.
-func addLines(lines, origins []string, name, data string) ([]string, []string) {
-	for i, line := range strings.Split(data, "\n") {
-		lines = append(lines, strings.TrimSuffix(line, "\r"))
-		origins = append(origins, fmt.Sprintf("%s:%d", name, i+1))
+// set starts tracking dir unless an enclosing directory already is.
+func (h *inherited) set(dir, by string) {
+	if h.prefix == "" {
+		h.prefix, h.by = dir+"/", by
 	}
-	return lines, origins
+}
+
+// pattern is one gitignore line compiled to a doublestar glob.
+type pattern struct {
+	glob    string
+	negate  bool
+	dirOnly bool
+	origin  string // e.g. "exclude.txt:3: *.log"
+}
+
+// rules is an ordered pattern list; later patterns take precedence.
+type rules []pattern
+
+// parsePattern compiles one gitignore line, reporting false for blank lines
+// and comments.  See https://git-scm.com/docs/gitignore#_pattern_format.
+func parsePattern(line, origin string) (pattern, bool) {
+	line = strings.TrimSuffix(line, "\r")
+	if line == "" || line[0] == '#' {
+		return pattern{}, false
+	}
+	// Trailing spaces are ignored unless escaped with a backslash.
+	for strings.HasSuffix(line, " ") && !strings.HasSuffix(line, `\ `) {
+		line = line[:len(line)-1]
+	}
+	p := pattern{origin: origin + ": " + line}
+	switch {
+	case line[0] == '!':
+		p.negate, line = true, line[1:]
+	case strings.HasPrefix(line, `\!`), strings.HasPrefix(line, `\#`):
+		line = line[1:]
+	}
+	if strings.HasSuffix(line, "/") {
+		p.dirOnly, line = true, strings.TrimSuffix(line, "/")
+	}
+	if line == "" {
+		return pattern{}, false
+	}
+	// Without a slash the pattern matches at any depth; with one it is
+	// relative to the pattern file's directory.
+	if !strings.Contains(line, "/") {
+		line = "**/" + line
+	}
+	line = strings.TrimPrefix(line, "/")
+	// "a/**" matches everything inside a, but not a itself.
+	if strings.HasSuffix(line, "/**") {
+		line += "/*"
+	}
+	// doublestar reads {a,b} as alternatives; gitignore does not.
+	p.glob = strings.NewReplacer("{", `\{`, "}", `\}`).Replace(line)
+	return p, true
+}
+
+// addLines appends the patterns in data, labelling each "name:N".
+func (r rules) addLines(name, data string) rules {
+	for i, line := range strings.Split(data, "\n") {
+		if p, ok := parsePattern(line, fmt.Sprintf("%s:%d", name, i+1)); ok {
+			r = append(r, p)
+		}
+	}
+	return r
+}
+
+// match reports whether the last pattern matching rel is a non-negated one,
+// and which pattern that is.  Matching a directory is left to the caller,
+// which applies the verdict to everything inside it.
+func (r rules) match(rel string, isDir bool) (bool, string) {
+	decided, matched, by := r.decide(rel, isDir)
+	return decided && matched, by
+}
+
+// decide is match that also reports whether any pattern matched at all, so
+// that a negation can override an earlier decision.
+func (r rules) decide(rel string, isDir bool) (decided, matched bool, by string) {
+	for i := len(r) - 1; i >= 0; i-- {
+		p := r[i]
+		if p.dirOnly && !isDir {
+			continue
+		}
+		if ok, _ := doublestar.Match(p.glob, rel); ok {
+			return true, !p.negate, p.origin
+		}
+	}
+	return false, false, ""
 }
 
 // loadRules compiles the patterns from files (where "-" reads stdin) followed
-// by patterns.  It returns nil when there are none.
-func loadRules(files, patterns []string, stdin io.Reader) (*rules, error) {
-	var lines, origins []string
+// by patterns.
+func loadRules(files, patterns []string, stdin io.Reader) (rules, error) {
+	var r rules
 	for _, f := range files {
 		var data []byte
 		var err error
@@ -288,21 +371,19 @@ func loadRules(files, patterns []string, stdin io.Reader) (*rules, error) {
 		if err != nil {
 			return nil, fmt.Errorf("reading pattern file %q: %w", f, err)
 		}
-		lines, origins = addLines(lines, origins, f, string(data))
+		r = r.addLines(f, string(data))
 	}
 	for _, p := range patterns {
-		lines = append(lines, p)
-		origins = append(origins, "pattern")
+		if pat, ok := parsePattern(p, "pattern"); ok {
+			r = append(r, pat)
+		}
 	}
-	if len(lines) == 0 {
-		return nil, nil
-	}
-	return &rules{ignore.CompileIgnoreLines(lines...), origins}, nil
+	return r, nil
 }
 
 // loadGitignore loads the .gitignore of directory relDir ("" or "a/b/") under
 // root, returning nil if it has none.
-func loadGitignore(root, relDir string) (*rules, error) {
+func loadGitignore(root, relDir string) (rules, error) {
 	name := relDir + ".gitignore"
 	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name)))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -311,39 +392,25 @@ func loadGitignore(root, relDir string) (*rules, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading %q: %w", name, err)
 	}
-	lines, origins := addLines(nil, nil, name, string(data))
-	return &rules{ignore.CompileIgnoreLines(lines...), origins}, nil
+	return rules(nil).addLines(name, string(data)), nil
 }
 
-// matchGitignores checks matchPath against the .gitignore of each of its
-// ancestor directories, each relative to its own directory.
-//
-// ponytail: any match excludes, so a deeper "!pattern" cannot re-include a
-// path ignored higher up (go-gitignore does not report negation-only
-// matches); git itself would re-include it.
-func matchGitignores(gitignores map[string]*rules, matchPath string) (bool, string) {
-	for i := 0; ; {
-		if ok, by := gitignores[matchPath[:i]].match(matchPath[i:]); ok {
-			return true, by
+// matchGitignores applies the .gitignore of each ancestor directory of rel,
+// relative to that directory.  As in git, a deeper .gitignore takes
+// precedence, so its "!pattern" can re-include what a parent one ignores.
+func matchGitignores(gitignores map[string]rules, rel string, isDir bool) (bool, string) {
+	dirs := []string{""}
+	for i := range len(rel) {
+		if rel[i] == '/' {
+			dirs = append(dirs, rel[:i+1])
 		}
-		j := strings.IndexByte(matchPath[i:], '/')
-		if j < 0 || i+j+1 == len(matchPath) {
-			return false, ""
+	}
+	for k := len(dirs) - 1; k >= 0; k-- {
+		if decided, matched, by := gitignores[dirs[k]].decide(rel[len(dirs[k]):], isDir); decided {
+			return matched, by
 		}
-		i += j + 1
 	}
-}
-
-// match reports whether path matches, and if so which rule matched it.
-func (r *rules) match(path string) (bool, string) {
-	if r == nil {
-		return false, ""
-	}
-	ok, p := r.gi.MatchesPathHow(path)
-	if !ok {
-		return false, ""
-	}
-	return true, r.origins[p.LineNo-1] + ": " + p.Line
+	return false, ""
 }
 
 // copyResults copies each included file to dstRoot, preserving the relative

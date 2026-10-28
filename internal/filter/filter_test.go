@@ -99,6 +99,13 @@ func TestRun_Patterns(t *testing.T) {
 			want:    []string{"keep1.txt", "keep2.txt"},
 		},
 		{
+			name:    "protected directory keeps its contents",
+			files:   []string{"docs/a.md", "docs/sub/b.md", "c.md"},
+			exclude: []string{"*.md\n"},
+			protect: []string{"docs/\n"},
+			want:    []string{"docs", "docs/a.md", "docs/sub", "docs/sub/b.md"},
+		},
+		{
 			name:    "protect inside excluded directory",
 			files:   []string{"vendor/keep.go", "vendor/sub/drop.go", "main.go", "zz.go"},
 			exclude: []string{"vendor/\n"},

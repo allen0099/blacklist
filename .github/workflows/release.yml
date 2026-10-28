@@ -27,6 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       TAG: ${{ needs.release-please.outputs.tag }}
       CGO_ENABLED: "0"
@@ -49,6 +51,10 @@ jobs:
           done
           cd dist && sha256sum -- * > checksums.txt
 
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: dist/checksums.txt
+
       - name: Upload to release
         run: gh release upload "$TAG" dist/*
         env:
@@ -62,6 +68,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
 
@@ -83,7 +91,8 @@ jobs:
             type=semver,pattern={{major}},value=${{ needs.release-please.outputs.tag }}
             type=raw,value=latest
 
-      - uses: docker/build-push-action@v7
+      - id: push
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -93,3 +102,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true

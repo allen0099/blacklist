@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/allen0099/blacklist/compare/v0.2.0...v0.2.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **filter:** match patterns exactly like git ([7682de9](https://github.com/allen0099/blacklist/commit/7682de918f05284dde337c13a4498afba71e9d43))
+
 ## [0.2.0](https://github.com/allen0099/blacklist/compare/v0.1.0...v0.2.0) (2026-10-28)
 
 

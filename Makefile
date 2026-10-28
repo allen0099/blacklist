@@ -1,9 +1,8 @@
 BINARY      := blacklist
-MODULE      := $(shell go list -m)
 GO          := go
 GOFILES     := $(shell find . -name '*.go' -not -path './vendor/*')
 
-.PHONY: all build test vet fmt fmt-check vuln clean install-hooks help
+.PHONY: all build test vet fmt fmt-check vuln clean help
 
 ## all: build the binary (default target)
 all: build
@@ -47,12 +46,6 @@ fmt-check:
 ## clean: remove build artifacts
 clean:
 	rm -f $(BINARY) coverage.out
-
-## install-hooks: configure git to use the project's commit hooks
-install-hooks:
-	git config core.hooksPath .githooks
-	chmod +x .githooks/pre-commit
-	@echo "Git hooks installed (using .githooks/)."
 
 ## help: show this help message
 help:

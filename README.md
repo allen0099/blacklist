@@ -53,10 +53,11 @@ If `directory` is omitted the current working directory is used.
 |---|---|---|
 | `--exclude <file>` | `-e` | Path to a gitignore-format file with exclusion patterns. Repeatable. |
 | `--protect <file>` | `-p` | Path to a gitignore-format file with protection patterns. Repeatable. |
-| `--output <dir>` | `-o` | Copy included files to this directory (preserving structure). |
+| `--output <dir>` | `-o` | Copy included files to this directory (preserving structure). Must not be the source directory or one of its parents; an output directory inside the source is skipped. |
 | `--dry-run` | | Show what would be done without writing any files. |
 | `--verbose` | `-v` | Enable debug output (env: `BLACKLIST_VERBOSE`). |
 | `--quiet` | `-q` | Suppress all output except errors (env: `BLACKLIST_QUIET`). |
+| `--version` | | Print the version. |
 | `--help` | `-h` | Show help. |
 
 `--verbose` and `--quiet` are mutually exclusive.
@@ -156,7 +157,6 @@ make fmt-check      # fail if any files are not formatted (used in CI)
 make vet            # run go vet
 make vuln           # run govulncheck to scan for known vulnerabilities
 make clean          # remove build artifacts
-make install-hooks  # configure git to use .githooks/pre-commit
 make help           # list all targets
 ```
 
@@ -180,37 +180,10 @@ make build
 go build -o blacklist .
 ```
 
-### Git commit hooks
+### Releases
 
-The repository ships a pre-commit hook (`.githooks/pre-commit`) that rejects
-commits containing unformatted Go source files.  Install it once with:
-
-```bash
-make install-hooks
-```
-
-From that point on, any commit that includes a `.go` file that is not
-`gofmt`-clean will be rejected.  Fix formatting and re-commit:
-
-```bash
-make fmt
-git add -u
-git commit ...
-```
-
-### Build Docker image
-
-```bash
-docker build -t blacklist .
-```
-
-## GitHub Actions
-
-| Workflow | Trigger | Description |
-|---|---|---|
-| [CI](.github/workflows/ci.yml) | push / pull request | Format check, vet, test, vuln scan, build binaries |
-| [Release](.github/workflows/release.yml) | `v*.*.*` tag | Build & publish binaries + Docker image |
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+Releases are managed by [release-please](https://github.com/googleapis/release-please).
+Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`,
+`feat!:` …); release-please keeps a release PR open with the next version and
+changelog, and merging it tags the release, uploads the binaries and pushes the
+Docker image.

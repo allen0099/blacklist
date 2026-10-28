@@ -50,11 +50,10 @@ func TestFilterAndCopy(t *testing.T) {
 	writeFile(t, src, "drop.log", "d")
 	writeFile(t, src, "main.go", "package main")
 	ef := writeFile(t, t.TempDir(), "excl", "*.log\n")
-	pf := writeFile(t, t.TempDir(), "prot", "keep.log\n")
 
 	for _, dryRun := range []bool{false, true} {
 		dst := t.TempDir()
-		args := []string{"-e", ef, "-p", pf, "-o", dst, src}
+		args := []string{"-e", ef, "-P", "keep.log", "-o", dst, src}
 		if dryRun {
 			args = append(args, "--dry-run")
 		}

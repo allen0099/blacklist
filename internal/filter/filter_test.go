@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/allen0099/blacklist/internal/filter"
@@ -122,6 +123,23 @@ func TestRun_Patterns(t *testing.T) {
 	}
 }
 
+func TestRun_PatternSources(t *testing.T) {
+	root := makeTree(t, "a.go", "b.log", "c.tmp", "keep.tmp")
+	results, err := filter.Run(filter.Options{
+		Dir:             root,
+		ExcludeFiles:    []string{"-"},
+		Stdin:           strings.NewReader("*.log\n"),
+		ExcludePatterns: []string{"*.tmp"},
+		ProtectPatterns: []string{"keep.tmp"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := included(results), []string{"a.go", "keep.tmp"}; !slices.Equal(got, want) {
+		t.Errorf("included = %v, want %v", got, want)
+	}
+}
+
 func TestRun_Errors(t *testing.T) {
 	root := makeTree(t, "a.go")
 	tests := map[string]filter.Options{
@@ -131,6 +149,8 @@ func TestRun_Errors(t *testing.T) {
 		"missing protect file":   {Dir: root, ProtectFiles: []string{"/nonexistent-patterns"}},
 		"output is source":       {Dir: root, OutputDir: root},
 		"output is above source": {Dir: root, OutputDir: filepath.Dir(root)},
+		"stdin used twice":       {Dir: root, ExcludeFiles: []string{"-"}, ProtectFiles: []string{"-"}, Stdin: strings.NewReader("")},
+		"stdin missing":          {Dir: root, ExcludeFiles: []string{"-"}},
 	}
 	for name, opts := range tests {
 		if _, err := filter.Run(opts); err == nil {

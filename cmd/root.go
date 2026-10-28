@@ -31,13 +31,15 @@ func isTruthy(val string) bool {
 // create isolated instances without shared flag state.
 func NewRootCmd(version string) *cobra.Command {
 	var (
-		excludeFiles []string
-		protectFiles []string
-		outputDir    string
-		verbose      bool
-		quiet        bool
-		dryRun       bool
-		null         bool
+		excludeFiles    []string
+		protectFiles    []string
+		excludePatterns []string
+		protectPatterns []string
+		outputDir       string
+		verbose         bool
+		quiet           bool
+		dryRun          bool
+		null            bool
 	)
 
 	c := &cobra.Command{
@@ -66,9 +68,13 @@ would copy without making any changes.`,
 	}
 
 	c.Flags().StringArrayVarP(&excludeFiles, "exclude", "e", nil,
-		"path to gitignore-format file containing exclusion patterns (repeatable)")
+		"path to gitignore-format file containing exclusion patterns, - for stdin (repeatable)")
 	c.Flags().StringArrayVarP(&protectFiles, "protect", "p", nil,
-		"path to gitignore-format file containing protection patterns (repeatable)")
+		"path to gitignore-format file containing protection patterns, - for stdin (repeatable)")
+	c.Flags().StringArrayVarP(&excludePatterns, "exclude-pattern", "E", nil,
+		"exclusion pattern given directly (repeatable)")
+	c.Flags().StringArrayVarP(&protectPatterns, "protect-pattern", "P", nil,
+		"protection pattern given directly (repeatable)")
 	c.Flags().StringVarP(&outputDir, "output", "o", "",
 		"output directory: copy included files here (preserving tree structure)")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false,
@@ -84,7 +90,15 @@ would copy without making any changes.`,
 	c.MarkFlagsMutuallyExclusive("verbose", "quiet")
 
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runCmd(cmd, args, excludeFiles, protectFiles, outputDir, verbose, quiet, dryRun, null)
+		return runCmd(cmd, args, filter.Options{
+			ExcludeFiles:    excludeFiles,
+			ProtectFiles:    protectFiles,
+			ExcludePatterns: excludePatterns,
+			ProtectPatterns: protectPatterns,
+			OutputDir:       outputDir,
+			DryRun:          dryRun,
+			Stdin:           cmd.InOrStdin(),
+		}, verbose, quiet, null)
 	}
 
 	return c
@@ -100,9 +114,8 @@ func Execute(version string) {
 func runCmd(
 	cmd *cobra.Command,
 	args []string,
-	excludeFiles, protectFiles []string,
-	outputDir string,
-	verbose, quiet, dryRun, null bool,
+	opts filter.Options,
+	verbose, quiet, null bool,
 ) error {
 	// Apply environment-variable defaults when the flags were not explicitly
 	// set on the command line.  An explicit flag always wins.
@@ -121,25 +134,19 @@ func runCmd(
 	log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: level}))
 
 	// Resolve working directory.
-	dir := "."
+	opts.Dir = "."
 	if len(args) == 1 {
-		dir = args[0]
+		opts.Dir = args[0]
 	}
+	opts.Logger = log
 
-	log.Info("starting blacklist", "dir", dir,
-		"excludeFiles", excludeFiles,
-		"protectFiles", protectFiles,
-		"outputDir", outputDir,
-		"dryRun", dryRun)
+	log.Info("starting blacklist", "dir", opts.Dir,
+		"excludeFiles", opts.ExcludeFiles,
+		"protectFiles", opts.ProtectFiles,
+		"outputDir", opts.OutputDir,
+		"dryRun", opts.DryRun)
 
-	results, err := filter.Run(filter.Options{
-		Dir:          dir,
-		ExcludeFiles: excludeFiles,
-		ProtectFiles: protectFiles,
-		OutputDir:    outputDir,
-		DryRun:       dryRun,
-		Logger:       log,
-	})
+	results, err := filter.Run(opts)
 	if err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	ignore "github.com/sabhiram/go-gitignore"
@@ -45,11 +46,17 @@ type Options struct {
 	// Dir is the root directory to walk.
 	Dir string
 	// ExcludeFiles contains paths to gitignore-format files whose patterns
-	// determine which files to exclude.
+	// determine which files to exclude.  "-" reads Stdin.
 	ExcludeFiles []string
 	// ProtectFiles contains paths to gitignore-format files whose patterns
-	// determine which files to protect from exclusion.
+	// determine which files to protect from exclusion.  "-" reads Stdin.
 	ProtectFiles []string
+	// ExcludePatterns and ProtectPatterns are individual patterns given
+	// directly, applied after the ones from files.
+	ExcludePatterns []string
+	ProtectPatterns []string
+	// Stdin is read for a pattern file named "-".
+	Stdin io.Reader
 	// OutputDir, when non-empty, causes included files to be copied there
 	// preserving the relative directory structure.
 	OutputDir string
@@ -95,12 +102,22 @@ func Run(opts Options) ([]Result, error) {
 	}
 
 	// Compile patterns.
-	excludeMatcher, err := compilePatterns(opts.ExcludeFiles)
+	stdinUses := 0
+	for _, f := range slices.Concat(opts.ExcludeFiles, opts.ProtectFiles) {
+		if f == "-" {
+			stdinUses++
+		}
+	}
+	if stdinUses > 1 {
+		return nil, fmt.Errorf("stdin (-) can only be used for one pattern file")
+	}
+
+	excludeRules, err := loadRules(opts.ExcludeFiles, opts.ExcludePatterns, opts.Stdin)
 	if err != nil {
 		return nil, fmt.Errorf("compiling exclude patterns: %w", err)
 	}
 
-	protectMatcher, err := compilePatterns(opts.ProtectFiles)
+	protectRules, err := loadRules(opts.ProtectFiles, opts.ProtectPatterns, opts.Stdin)
 	if err != nil {
 		return nil, fmt.Errorf("compiling protect patterns: %w", err)
 	}
@@ -148,8 +165,9 @@ func Run(opts Options) ([]Result, error) {
 		if excludedDir != "" && !strings.HasPrefix(relSlash, excludedDir) {
 			excludedDir = ""
 		}
-		excluded := excludedDir != "" || (excludeMatcher != nil && excludeMatcher.MatchesPath(matchPath))
-		protected := protectMatcher != nil && protectMatcher.MatchesPath(matchPath)
+		excluded, _ := excludeRules.match(matchPath)
+		excluded = excluded || excludedDir != ""
+		protected, _ := protectRules.match(matchPath)
 
 		r := Result{
 			Path:      path,
@@ -170,7 +188,7 @@ func Run(opts Options) ([]Result, error) {
 		// An excluded, unprotected directory: skip its subtree unless protect
 		// rules could still keep something inside it.
 		if d.IsDir() && excluded && !protected {
-			if protectMatcher == nil {
+			if protectRules == nil {
 				return fs.SkipDir
 			}
 			if excludedDir == "" {
@@ -200,26 +218,56 @@ func within(parent, child string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// compilePatterns loads each file and returns a single combined Matcher.
-// Returns nil (no error) when files is empty.
-func compilePatterns(files []string) (*ignore.GitIgnore, error) {
-	if len(files) == 0 {
-		return nil, nil
-	}
+// rules is a compiled pattern set that remembers where each line came from.
+type rules struct {
+	gi      *ignore.GitIgnore
+	origins []string // origins[i] names line i+1, e.g. "exclude.txt:3"
+}
 
-	var lines []string
+// loadRules compiles the patterns from files (where "-" reads stdin) followed
+// by patterns.  It returns nil when there are none.
+func loadRules(files, patterns []string, stdin io.Reader) (*rules, error) {
+	var lines, origins []string
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		var data []byte
+		var err error
+		if f == "-" {
+			if stdin == nil {
+				return nil, fmt.Errorf("pattern file - given but no stdin available")
+			}
+			data, err = io.ReadAll(stdin)
+		} else {
+			data, err = os.ReadFile(f)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("reading pattern file %q: %w", f, err)
 		}
 		// Strip CR so CRLF-edited files match like LF ones.
-		for _, line := range strings.Split(string(data), "\n") {
+		for i, line := range strings.Split(string(data), "\n") {
 			lines = append(lines, strings.TrimSuffix(line, "\r"))
+			origins = append(origins, fmt.Sprintf("%s:%d", f, i+1))
 		}
 	}
+	for _, p := range patterns {
+		lines = append(lines, p)
+		origins = append(origins, "pattern")
+	}
+	if len(lines) == 0 {
+		return nil, nil
+	}
+	return &rules{ignore.CompileIgnoreLines(lines...), origins}, nil
+}
 
-	return ignore.CompileIgnoreLines(lines...), nil
+// match reports whether path matches, and if so which rule matched it.
+func (r *rules) match(path string) (bool, string) {
+	if r == nil {
+		return false, ""
+	}
+	ok, p := r.gi.MatchesPathHow(path)
+	if !ok {
+		return false, ""
+	}
+	return true, r.origins[p.LineNo-1] + ": " + p.Line
 }
 
 // copyResults copies each included file to dstRoot, preserving the relative

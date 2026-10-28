@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/allen0099/blacklist/internal/filter"
-	"github.com/allen0099/blacklist/internal/logger"
 	"github.com/spf13/cobra"
 )
 
@@ -99,24 +99,19 @@ func runCmd(
 ) error {
 	// Apply environment-variable defaults when the flags were not explicitly
 	// set on the command line.  An explicit flag always wins.
-	if !cmd.Flags().Changed("verbose") && isTruthy(os.Getenv(EnvVerbose)) {
-		verbose = true
-	}
-	if !cmd.Flags().Changed("quiet") && isTruthy(os.Getenv(EnvQuiet)) {
-		quiet = true
+	if !cmd.Flags().Changed("verbose") && !cmd.Flags().Changed("quiet") {
+		verbose = isTruthy(os.Getenv(EnvVerbose))
+		quiet = isTruthy(os.Getenv(EnvQuiet))
 	}
 
-	// Initialise logger.
+	level := slog.LevelInfo
 	switch {
 	case verbose:
-		logger.Init(logger.LevelVerbose)
+		level = slog.LevelDebug
 	case quiet:
-		logger.Init(logger.LevelQuiet)
-	default:
-		logger.Init(logger.LevelNormal)
+		level = slog.LevelError
 	}
-
-	log := logger.Get()
+	log := slog.New(slog.NewTextHandler(cmd.ErrOrStderr(), &slog.HandlerOptions{Level: level}))
 
 	// Resolve working directory.
 	dir := "."

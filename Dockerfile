@@ -9,18 +9,17 @@ RUN go mod download
 
 COPY . .
 
+ARG VERSION=dev
 RUN CGO_ENABLED=0 go build \
-        -ldflags="-s -w" \
+        -ldflags="-s -w -X main.version=${VERSION}" \
         -o /blacklist \
         .
 
 # ── Final stage ────────────────────────────────────────────────────────────────
 FROM alpine:3.23
 
-# Install ca-certificates for HTTPS calls (future-proofing) and
-# add a non-root user so the image is safe to run in GitLab CI.
-RUN apk add --no-cache ca-certificates && \
-    adduser -D -u 1000 blacklist
+# Alpine (not scratch) keeps a shell for CI job images; run as non-root.
+RUN adduser -D -u 1000 blacklist
 
 COPY --from=builder /blacklist /usr/local/bin/blacklist
 

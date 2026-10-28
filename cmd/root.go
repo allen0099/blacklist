@@ -40,6 +40,7 @@ func NewRootCmd(version string) *cobra.Command {
 		quiet           bool
 		dryRun          bool
 		null            bool
+		explain         bool
 	)
 
 	c := &cobra.Command{
@@ -83,6 +84,8 @@ would copy without making any changes.`,
 		"suppress non-error log output (env: "+EnvQuiet+")")
 	c.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print what would be done without making any changes")
+	c.Flags().BoolVar(&explain, "explain", false,
+		"list every path with its verdict and the rule that decided it")
 	c.Flags().BoolVarP(&null, "null", "0", false,
 		"separate output paths with NUL instead of newline (for xargs -0, tar --null -T -)")
 
@@ -98,7 +101,7 @@ would copy without making any changes.`,
 			OutputDir:       outputDir,
 			DryRun:          dryRun,
 			Stdin:           cmd.InOrStdin(),
-		}, verbose, quiet, null)
+		}, verbose, quiet, null, explain)
 	}
 
 	return c
@@ -115,7 +118,7 @@ func runCmd(
 	cmd *cobra.Command,
 	args []string,
 	opts filter.Options,
-	verbose, quiet, null bool,
+	verbose, quiet, null, explain bool,
 ) error {
 	// Apply environment-variable defaults when the flags were not explicitly
 	// set on the command line.  An explicit flag always wins.
@@ -157,9 +160,13 @@ func runCmd(
 	if null {
 		sep = "\x00"
 	}
+	out := cmd.OutOrStdout()
 	for _, r := range results {
-		if r.Included() && !r.IsDir {
-			fmt.Fprint(cmd.OutOrStdout(), r.Rel+sep)
+		switch {
+		case explain:
+			fmt.Fprint(out, explainLine(r)+sep)
+		case r.Included() && !r.IsDir:
+			fmt.Fprint(out, r.Rel+sep)
 		}
 	}
 
@@ -182,4 +189,23 @@ func runCmd(
 		"protected", protected)
 
 	return nil
+}
+
+// explainLine formats r as "verdict<TAB>path<TAB>reasons".
+func explainLine(r filter.Result) string {
+	verdict, path := "include", r.Rel
+	if !r.Included() {
+		verdict = "exclude"
+	}
+	if r.IsDir {
+		path += "/"
+	}
+	var reasons []string
+	if r.Excluded {
+		reasons = append(reasons, "excluded by "+r.ExcludedBy)
+	}
+	if r.Protected {
+		reasons = append(reasons, "protected by "+r.ProtectedBy)
+	}
+	return strings.TrimSuffix(verdict+"\t"+path+"\t"+strings.Join(reasons, "; "), "\t")
 }

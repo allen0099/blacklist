@@ -30,6 +30,10 @@ type Result struct {
 	IsDir     bool
 	Excluded  bool
 	Protected bool
+	// ExcludedBy and ProtectedBy name the matching rule, e.g.
+	// "exclude.txt:3: *.log".
+	ExcludedBy  string
+	ProtectedBy string
 }
 
 // Included reports whether the file should be kept (not excluded, or protected
@@ -129,7 +133,7 @@ func Run(opts Options) ([]Result, error) {
 	var results []Result
 	// excludedDir is the excluded (unprotected) directory whose subtree is
 	// being walked, so that its descendants inherit the exclusion.
-	var excludedDir string
+	var excludedDir, excludedDirBy string
 
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -165,16 +169,20 @@ func Run(opts Options) ([]Result, error) {
 		if excludedDir != "" && !strings.HasPrefix(relSlash, excludedDir) {
 			excludedDir = ""
 		}
-		excluded, _ := excludeRules.match(matchPath)
-		excluded = excluded || excludedDir != ""
-		protected, _ := protectRules.match(matchPath)
+		excluded, excludedBy := excludeRules.match(matchPath)
+		if excludedDir != "" {
+			excluded, excludedBy = true, excludedDirBy
+		}
+		protected, protectedBy := protectRules.match(matchPath)
 
 		r := Result{
-			Path:      path,
-			Rel:       relSlash,
-			IsDir:     d.IsDir(),
-			Excluded:  excluded,
-			Protected: protected,
+			Path:        path,
+			Rel:         relSlash,
+			IsDir:       d.IsDir(),
+			Excluded:    excluded,
+			Protected:   protected,
+			ExcludedBy:  excludedBy,
+			ProtectedBy: protectedBy,
 		}
 
 		if r.Included() {
@@ -192,7 +200,7 @@ func Run(opts Options) ([]Result, error) {
 				return fs.SkipDir
 			}
 			if excludedDir == "" {
-				excludedDir = matchPath
+				excludedDir, excludedDirBy = matchPath, excludedBy
 			}
 		}
 

@@ -90,6 +90,26 @@ func TestListing(t *testing.T) {
 	}
 }
 
+func TestExplain(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "")
+	writeFile(t, dir, "vendor/keep.go", "")
+	writeFile(t, dir, "vendor/x.go", "")
+	ef := writeFile(t, t.TempDir(), "excl", "# deps\nvendor/\n")
+
+	out, _, err := run(t, "-q", "--explain", "-e", ef, "-P", "keep.go", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "include\ta.go\n" +
+		"exclude\tvendor/\texcluded by " + ef + ":2: vendor/\n" +
+		"include\tvendor/keep.go\texcluded by " + ef + ":2: vendor/; protected by pattern: keep.go\n" +
+		"exclude\tvendor/x.go\texcluded by " + ef + ":2: vendor/\n"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
 func TestVerbosity(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", "")

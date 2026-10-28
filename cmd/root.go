@@ -29,7 +29,7 @@ func isTruthy(val string) bool {
 
 // NewRootCmd creates and returns a fresh root command.  This enables tests to
 // create isolated instances without shared flag state.
-func NewRootCmd() *cobra.Command {
+func NewRootCmd(version string) *cobra.Command {
 	var (
 		excludeFiles []string
 		protectFiles []string
@@ -56,6 +56,7 @@ Priority: protect > exclude.
 When --output is given, included files are copied to that directory, preserving
 the relative path structure.  Combined with --dry-run, the tool prints what it
 would copy without making any changes.`,
+		Version:      version,
 		Args:         cobra.MaximumNArgs(1),
 		SilenceUsage: true,
 	}
@@ -84,8 +85,8 @@ would copy without making any changes.`,
 }
 
 // Execute runs the root command.  Call this from main.
-func Execute() {
-	if err := NewRootCmd().Execute(); err != nil {
+func Execute(version string) {
+	if err := NewRootCmd(version).Execute(); err != nil {
 		os.Exit(1)
 	}
 }

@@ -26,7 +26,7 @@ func writeFile(t *testing.T, dir, name, content string) string {
 // stderr.
 func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	root := cmd.NewRootCmd()
+	root := cmd.NewRootCmd("v1.2.3")
 	root.SetArgs(args)
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)
@@ -35,9 +35,12 @@ func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 	return out.String(), errOut.String(), err
 }
 
-func TestHelp(t *testing.T) {
+func TestHelpAndVersion(t *testing.T) {
 	if out, _, _ := run(t, "--help"); !strings.Contains(out, "blacklist") {
 		t.Errorf("help output should mention blacklist, got: %s", out)
+	}
+	if out, _, _ := run(t, "--version"); !strings.Contains(out, "v1.2.3") {
+		t.Errorf("version output should contain v1.2.3, got: %s", out)
 	}
 }
 

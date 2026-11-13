@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/allen0099/blacklist/compare/v0.2.1...v0.2.2) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** update go toolchain directive to v1.27.4 ([#23](https://github.com/allen0099/blacklist/issues/23)) ([efc6c92](https://github.com/allen0099/blacklist/commit/efc6c9247f66cc6482d4b8207a20b46508d6f6cb))
+
 ## [0.2.1](https://github.com/allen0099/blacklist/compare/v0.2.0...v0.2.1) (2026-10-28)
 
 
